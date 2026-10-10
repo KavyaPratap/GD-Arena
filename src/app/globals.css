@@ -489,7 +489,7 @@ ul.feature-list {
 }
 .timer-arc {
   position: relative;
-  width: clamp(130px, 17vw, 210px);
+  width: clamp(100px, 13vw, 150px);
   aspect-ratio: 1;
   display: grid;
   place-items: center;
@@ -508,12 +508,12 @@ ul.feature-list {
 }
 .timer-arc .time {
   font-family: var(--font-display);
-  font-size: clamp(30px, 4vw, 48px);
+  font-size: clamp(22px, 2.8vw, 36px);
   font-weight: 700;
   font-variant-numeric: tabular-nums;
 }
 .timer-arc .phase {
-  font-size: 12px;
+  font-size: 11px;
   letter-spacing: 0.14em;
   text-transform: uppercase;
   color: var(--accent-2);
@@ -533,9 +533,16 @@ ul.feature-list {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 8px;
-  width: 140px;
+  gap: 5px;
+  width: 130px;
   z-index: 2;
+}
+.seat[data-seat="student"] {
+  gap: 3px;
+}
+.seat[data-seat="student"] .trait {
+  font-size: 11px;
+  opacity: 0.8;
 }
 .orb {
   --h: 250;
@@ -981,27 +988,35 @@ input[type="range"] {
   position: relative;
   flex: 1;
   min-height: 0;
-  display: grid;
-  place-items: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 0;
 }
 .table-area .table-wrap {
   height: 100%;
+  max-height: min(480px, 100%);
   width: auto;
   max-width: 100%;
-  aspect-ratio: 16 / 9.4;
+  aspect-ratio: 16 / 9.6;
+  position: relative;
 }
 
 .captions {
-  margin: 8px auto 14px;
-  width: min(880px, 100%);
-  min-height: 78px;
-  padding: 14px 20px;
+  margin: 14px auto 12px;
+  width: min(840px, 100%);
+  min-height: 68px;
+  max-height: 18vh;
+  padding: 10px 18px;
   border-radius: 16px;
   text-align: center;
-  font-size: 19px;
+  font-size: 17px;
   line-height: 1.45;
-  background: hsl(250 35% 8% / 0.8);
+  background: hsl(250 35% 8% / 0.88);
   border: 1px solid var(--line);
+  position: relative;
+  z-index: 3;
+  flex-shrink: 0;
 }
 .captions .who {
   display: block;

@@ -67,6 +67,7 @@ function Room({ cfg, onEnded }: { cfg: RoomConfig; onEnded: () => void }) {
   const [capSize, setCapSize] = useState<"small" | "normal" | "large">("normal");
   const [highContrast, setHighContrast] = useState(false);
   const [patience, setPatience] = useState(cfg.patienceMs);
+  const [bannerDismissed, setBannerDismissed] = useState(false);
   const txRef = useRef<HTMLDivElement>(null);
 
   const [cameraOn, setCameraOn] = useState(!!cfg.camera);
@@ -212,9 +213,17 @@ function Room({ cfg, onEnded }: { cfg: RoomConfig; onEnded: () => void }) {
                 ? "Microphone is blocked, so you are in typing mode. The panel still speaks out loud. Allow the mic in your browser's site settings to talk."
                 : "No microphone was found, so you are in typing mode. The panel still speaks out loud."}
             </div>
-          ) : health.stt === "unsupported" && phase !== "lobby" ? (
-            <div className="banner info" role="status">
-              Browser speech recognition is unavailable here (needs Chrome/Edge on HTTPS/localhost). Use the reply box below to send your points so the panel debates you directly!
+          ) : !bannerDismissed && health.stt === "unsupported" && phase !== "lobby" ? (
+            <div className="banner info" role="status" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <span>Live speech recognition needs Chrome/Edge. Type your replies below so the panel debates you directly!</span>
+              <button
+                className="btn btn-ghost btn-sm"
+                onClick={() => setBannerDismissed(true)}
+                aria-label="Dismiss banner"
+                style={{ padding: "2px 8px", fontSize: 13, minWidth: "auto", border: 0 }}
+              >
+                ✕
+              </button>
             </div>
           ) : health.tts === "unsupported" ? (
             <div className="banner info" role="status">
