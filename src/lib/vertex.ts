@@ -13,13 +13,42 @@ const auth = new GoogleAuth({
   scopes: ["https://www.googleapis.com/auth/cloud-platform"],
 });
 
+let cachedToken: string | null = null;
+let tokenExpiresAt = 0;
+
 export async function getAccessToken(): Promise<string> {
-  const client = await auth.getClient();
-  const token = await client.getAccessToken();
-  if (!token.token) {
-    throw new Error("Failed to retrieve Google Cloud access token. Ensure credentials are configured.");
+  // Use in-memory cached token if valid for at least 5 minutes
+  if (cachedToken && Date.now() < tokenExpiresAt - 300_000) {
+    return cachedToken;
   }
-  return token.token;
+
+  // 1. Try google-auth-library
+  try {
+    const client = await auth.getClient();
+    const token = await client.getAccessToken();
+    if (token.token) {
+      cachedToken = token.token;
+      tokenExpiresAt = Date.now() + 3300_000; // ~55 mins
+      return cachedToken;
+    }
+  } catch (authErr) {
+    console.warn("GoogleAuth getAccessToken failed, checking gcloud CLI fallback:", authErr);
+  }
+
+  // 2. Fallback to gcloud CLI
+  try {
+    const { execSync } = await import("child_process");
+    const cliToken = execSync("gcloud auth print-access-token", { encoding: "utf8", timeout: 4000 }).trim();
+    if (cliToken) {
+      cachedToken = cliToken;
+      tokenExpiresAt = Date.now() + 1800_000; // 30 mins
+      return cachedToken;
+    }
+  } catch (cliErr) {
+    console.error("gcloud CLI token fallback failed:", cliErr);
+  }
+
+  throw new Error("Failed to retrieve Google Cloud access token. Ensure credentials are configured.");
 }
 
 export interface VertexGenerateOptions {
@@ -78,15 +107,47 @@ export async function generateWithVertex(
   return part?.text || "";
 }
 
-/** Voice assignments for Google Cloud Text-to-Speech */
-export const CLOUD_TTS_VOICES: Record<string, { en: string; hi: string; pitch: number; rate: number }> = {
-  moderator: { en: "en-IN-Wavenet-D", hi: "hi-IN-Wavenet-D", pitch: -2.0, rate: 0.95 },
-  vikram: { en: "en-IN-Wavenet-C", hi: "hi-IN-Wavenet-C", pitch: -1.5, rate: 1.15 },
-  ananya: { en: "en-IN-Wavenet-A", hi: "hi-IN-Wavenet-A", pitch: 1.2, rate: 1.05 },
-  meera: { en: "en-IN-Wavenet-B", hi: "hi-IN-Wavenet-B", pitch: 2.0, rate: 0.88 },
-  rohan: { en: "en-IN-Journey-F", hi: "hi-IN-Wavenet-F", pitch: 0.0, rate: 1.1 },
-  kabir: { en: "en-IN-Journey-D", hi: "hi-IN-Wavenet-C", pitch: -3.0, rate: 0.98 },
-  sana: { en: "en-IN-Wavenet-A", hi: "hi-IN-Wavenet-A", pitch: 1.5, rate: 1.0 },
+/**
+ * Studio-grade Chirp 3 HD voice assignments for Google Cloud Text-to-Speech.
+ * Chirp 3 HD provides human-level breathing, authentic Indian English / Hindi accent
+ * intonation, natural emotion, and eliminates robotic synthetic monotone.
+ */
+export const CLOUD_TTS_VOICES: Record<string, { en: string; hi: string; rate: number }> = {
+  moderator: {
+    en: "en-IN-Chirp3-HD-Charon",
+    hi: "hi-IN-Chirp3-HD-Charon",
+    rate: 0.98, // Authoritative, measured, mature
+  },
+  vikram: {
+    en: "en-IN-Chirp3-HD-Fenrir",
+    hi: "hi-IN-Chirp3-HD-Fenrir",
+    rate: 1.05, // Fast-paced, assertive, confident
+  },
+  ananya: {
+    en: "en-IN-Chirp3-HD-Kore",
+    hi: "hi-IN-Chirp3-HD-Kore",
+    rate: 1.02, // Crisp, intellectual, structured
+  },
+  meera: {
+    en: "en-IN-Chirp3-HD-Aoede",
+    hi: "hi-IN-Chirp3-HD-Aoede",
+    rate: 0.94, // Gentle, reflective, polite
+  },
+  rohan: {
+    en: "en-IN-Chirp3-HD-Puck",
+    hi: "hi-IN-Chirp3-HD-Puck",
+    rate: 1.03, // Warm, charismatic, conversational
+  },
+  kabir: {
+    en: "en-IN-Chirp3-HD-Orus",
+    hi: "hi-IN-Chirp3-HD-Orus",
+    rate: 1.0, // Sharp contrarian, skeptical, analytical
+  },
+  sana: {
+    en: "en-IN-Chirp3-HD-Leda",
+    hi: "hi-IN-Chirp3-HD-Leda",
+    rate: 0.98, // Diplomatic, consensus-builder, poised
+  },
 };
 
 export async function synthesizeSpeech(
@@ -117,7 +178,6 @@ export async function synthesizeSpeech(
       audioConfig: {
         audioEncoding: "MP3",
         speakingRate: cfg.rate,
-        pitch: cfg.pitch,
       },
     }),
   });

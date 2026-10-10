@@ -111,9 +111,18 @@ Every participant has their own prompt vector, urgency, interruption propensity,
 - **Live Persona Turn Generator (`/api/turn`)**:
   - Dynamically prompts Gemini with the selected persona's private agenda, role, traits (urgency, interruption index), and conversational memory.
   - Supports English and natural romanized Hinglish code-switching based on student language detection.
-- **Cloud Text-to-Speech Integration (`/api/tts`)**:
-  - High-fidelity Indian English & Hindi neural voices (`en-IN-Wavenet-A/B/C/D`, `hi-IN-Wavenet`, `en-IN-Journey`) mapped to individual personas.
-  - Seamless client-side audio player with instant barge-in cutoff: pauses the audio element immediately when the student speaks.
+- **Studio-Grade Chirp 3 HD Speech (`/api/tts`)**:
+  - Replaced legacy mechanical synthesizers with Google's flagship **Chirp 3 HD** neural voices (`en-IN-Chirp3-HD-*` and `hi-IN-Chirp3-HD-*`).
+  - True human cadence with natural breathing, authentic Indian English & Hindi intonation, and emotional nuance.
+  - Persona Voice Matrix:
+    - **Mr. Iyer (Moderator)**: `Chirp3-HD-Charon` (Authoritative, measured, mature)
+    - **Vikram (Dominator)**: `Chirp3-HD-Fenrir` (Assertive, confident, rapid-fire)
+    - **Ananya (Framework Thinker)**: `Chirp3-HD-Kore` (Crisp, intellectual, structured)
+    - **Meera (Quiet Synthesizer)**: `Chirp3-HD-Aoede` (Gentle, thoughtful, polite)
+    - **Rohan (Storyteller)**: `Chirp3-HD-Puck` (Warm, conversational, charismatic)
+    - **Kabir (Skeptic)**: `Chirp3-HD-Orus` (Sharp, analytical, contrarian)
+    - **Sana (Diplomat)**: `Chirp3-HD-Leda` (Poised, consensus-builder)
+  - In-flight fetch cancellation on student barge-in and in-memory audio caching for instant response.
 - **AI Placement Analyst (`/api/report`)**:
   - Structured JSON evaluation endpoint evaluating student performance against 6 criteria with exact transcript quote extraction.
 - **Resilient Fallback**: If an API call is delayed or offline, the client seamlessly falls back to the local simulation without UI interruption.

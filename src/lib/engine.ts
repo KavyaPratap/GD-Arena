@@ -61,6 +61,7 @@ interface Current {
   chars: number;
   startedAt: number;
   done: boolean;
+  abort?: () => void;
   finish: (cancelled: boolean) => void;
 }
 
@@ -602,6 +603,7 @@ export class RoomEngine {
   }
 
   private currentAudio: HTMLAudioElement | null = null;
+  private audioCache = new Map<string, string>();
 
   private playSynth(cur: Current, text: string, speaker: PersonaId | "moderator") {
     const synth = "speechSynthesis" in window ? window.speechSynthesis : null;
@@ -696,43 +698,71 @@ export class RoomEngine {
       this.current = cur;
       this.emit();
 
-      // Try Cloud TTS first for high-fidelity voices
+      // Try Cloud TTS (Studio-grade Chirp 3 HD) first for human-realistic speech
       if (typeof window !== "undefined" && this.health.net === "online") {
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 2200);
-        fetch("/api/tts", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ text, speaker, lang: this.lang }),
-          signal: controller.signal,
-        })
-          .then((res) => (res.ok ? res.json() : null))
-          .then((data) => {
-            clearTimeout(timeout);
-            if (cur.done) return;
-            if (data?.audioContent) {
-              const audio = new Audio("data:audio/mp3;base64," + data.audioContent);
-              this.currentAudio = audio;
-              audio.onended = () => {
-                this.currentAudio = null;
-                cur.finish(false);
-              };
-              audio.onerror = () => {
-                this.currentAudio = null;
-                this.playSynth(cur, text, speaker);
-              };
-              audio.play().catch(() => {
-                this.currentAudio = null;
-                this.playSynth(cur, text, speaker);
-              });
-            } else {
+        const cacheKey = `${speaker}:${this.lang}:${text.trim()}`;
+        const cachedBase64 = this.audioCache.get(cacheKey);
+
+        const playAudioBase64 = (base64: string) => {
+          if (cur.done) return;
+          try {
+            const audio = new Audio("data:audio/mp3;base64," + base64);
+            this.currentAudio = audio;
+            audio.ontimeupdate = () => {
+              if (audio.duration) {
+                cur.chars = Math.floor(text.length * (audio.currentTime / audio.duration));
+              }
+            };
+            audio.onended = () => {
+              this.currentAudio = null;
+              cur.chars = text.length;
+              cur.finish(false);
+            };
+            audio.onerror = () => {
+              this.currentAudio = null;
               this.playSynth(cur, text, speaker);
-            }
-          })
-          .catch(() => {
+            };
+            audio.play().catch(() => {
+              this.currentAudio = null;
+              this.playSynth(cur, text, speaker);
+            });
+          } catch {
+            this.playSynth(cur, text, speaker);
+          }
+        };
+
+        if (cachedBase64) {
+          playAudioBase64(cachedBase64);
+        } else {
+          const controller = new AbortController();
+          const timeout = setTimeout(() => controller.abort(), 8500);
+          cur.abort = () => {
             clearTimeout(timeout);
-            if (!cur.done) this.playSynth(cur, text, speaker);
-          });
+            controller.abort();
+          };
+
+          fetch("/api/tts", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ text, speaker, lang: this.lang }),
+            signal: controller.signal,
+          })
+            .then((res) => (res.ok ? res.json() : null))
+            .then((data) => {
+              clearTimeout(timeout);
+              if (cur.done) return;
+              if (data?.audioContent) {
+                this.audioCache.set(cacheKey, data.audioContent);
+                playAudioBase64(data.audioContent);
+              } else {
+                this.playSynth(cur, text, speaker);
+              }
+            })
+            .catch(() => {
+              clearTimeout(timeout);
+              if (!cur.done) this.playSynth(cur, text, speaker);
+            });
+        }
       } else {
         this.playSynth(cur, text, speaker);
       }
@@ -741,6 +771,13 @@ export class RoomEngine {
 
   private cancelCurrent() {
     if (!this.current) return;
+    if (this.current.abort) {
+      try {
+        this.current.abort();
+      } catch {
+        /* noop */
+      }
+    }
     if (this.currentAudio) {
       try {
         this.currentAudio.pause();
