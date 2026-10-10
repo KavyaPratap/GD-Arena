@@ -108,7 +108,9 @@ ${kind === "closing" ? `Deliver your closing statement now as ${persona.name}:` 
     let audioContent: string | undefined;
     if (wantAudio) {
       try {
-        audioContent = await synthesizeSpeech(cleanText, chosenSpeaker, isHinglish ? "hinglish" : "en");
+        const ttsPromise = synthesizeSpeech(cleanText, chosenSpeaker, isHinglish ? "hinglish" : "en");
+        const ttsTimer = new Promise<undefined>((resolve) => setTimeout(resolve, 2500));
+        audioContent = (await Promise.race([ttsPromise, ttsTimer])) ?? undefined;
       } catch (e) {
         console.warn("API /api/turn: inline TTS failed, client will request it separately:", e instanceof Error ? e.message : e);
       }

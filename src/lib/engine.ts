@@ -237,7 +237,7 @@ export class RoomEngine {
     this.t0 = performance.now();
     this.lastAnyEnd = performance.now();
     if (this.audioCtx?.state === "suspended") void this.audioCtx.resume();
-    this.unlockTTS();
+    this.unlockAudio();
     this.startRecognition();
     this.startTick();
 
@@ -289,6 +289,13 @@ export class RoomEngine {
 
   endNow() {
     this.cancelCurrent();
+    if (typeof window !== "undefined" && "speechSynthesis" in window) {
+      try {
+        window.speechSynthesis.cancel();
+      } catch {
+        /* noop */
+      }
+    }
     this.busy = false;
     this.studentClosingActive = false;
     this.resolveStudentClosing?.();
@@ -306,6 +313,7 @@ export class RoomEngine {
 
   destroy() {
     this.destroyed = true;
+    this.cancelCurrent();
     if (this.interval) clearInterval(this.interval);
     this.recogWanted = false;
     try {
@@ -463,7 +471,7 @@ export class RoomEngine {
     if (this.paused) return;
     if (!(this.phase === "discussion" || (this.phase === "closing" && this.studentClosingActive))) return;
     // If an AI is currently speaking, user voice triggers immediate barge-in so their opening words aren't lost
-    if (this.current) {
+    if (this.current && this.current.speaker !== "moderator" && this.phase === "discussion") {
       if (performance.now() > this.suppressBargeUntil) {
         this.bargeIn();
       } else {
@@ -588,6 +596,30 @@ export class RoomEngine {
 
   // ───────────────────────────── speech output ─────────────────────────────
 
+  private synthUtterances: SpeechSynthesisUtterance[] = [];
+
+  private unlockAudio() {
+    if (typeof window === "undefined") return;
+    try {
+      // Synchronously play a silent audio snippet on mobile to unlock HTML5 Audio autoplay restriction
+      const a = new Audio("data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA");
+      a.volume = 0.01;
+      const p = a.play();
+      if (p !== undefined) {
+        p.then(() => {
+          a.pause();
+          a.remove();
+        }).catch(() => undefined);
+      }
+    } catch {
+      /* noop */
+    }
+    if (this.audioCtx && this.audioCtx.state === "suspended") {
+      void this.audioCtx.resume();
+    }
+    this.unlockTTS();
+  }
+
   private unlockTTS() {
     if (!("speechSynthesis" in window)) return;
     try {
@@ -694,7 +726,7 @@ export class RoomEngine {
   private async llmLine(id: PersonaId, kind: "normal" | "closing", fallback: string): Promise<string> {
     if (this.health.net !== "online" || typeof window === "undefined") return fallback;
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 3200);
+    const timeout = setTimeout(() => controller.abort(), 9000);
     try {
       const res = await fetch("/api/turn", {
         method: "POST",
@@ -711,12 +743,16 @@ export class RoomEngine {
         }),
         signal: controller.signal,
       });
-      if (!res.ok) return fallback;
+      if (!res.ok) {
+        console.warn(`/api/turn status ${res.status}, using dynamic fallback`);
+        return fallback;
+      }
       const data = await res.json();
       if (typeof data?.text !== "string" || !data.text.trim()) return fallback;
       if (data.audioContent) this.audioCache.set(this.ttsKey(id, data.text), data.audioContent);
       return data.text;
-    } catch {
+    } catch (err) {
+      console.warn("Turn LLM failed or timed out, using fallback:", err);
       return fallback;
     } finally {
       clearTimeout(timeout);
@@ -735,6 +771,7 @@ export class RoomEngine {
     let offset = 0;
     sentences.forEach((s, i) => {
       const u = new SpeechSynthesisUtterance(s.trim());
+      this.synthUtterances.push(u);
       if (voice) u.voice = voice;
       u.lang = voice?.lang ?? (this.lang === "hinglish" ? "hi-IN" : "en-IN");
       u.pitch = persona.voice.pitch;
@@ -744,9 +781,13 @@ export class RoomEngine {
         cur.chars = base + ev.charIndex;
       };
       u.onend = () => {
+        const idx = this.synthUtterances.indexOf(u);
+        if (idx !== -1) this.synthUtterances.splice(idx, 1);
         if (i === sentences.length - 1) cur.finish(false);
       };
       u.onerror = (ev) => {
+        const idx = this.synthUtterances.indexOf(u);
+        if (idx !== -1) this.synthUtterances.splice(idx, 1);
         if (ev.error === "canceled" || ev.error === "interrupted") return;
         this.health.tts = "unsupported";
         cur.finish(false);
@@ -865,6 +906,24 @@ export class RoomEngine {
   }
 
   private cancelCurrent() {
+    this.synthUtterances = [];
+    if (typeof window !== "undefined" && "speechSynthesis" in window) {
+      try {
+        window.speechSynthesis.cancel();
+      } catch {
+        /* noop */
+      }
+    }
+    if (this.currentAudio) {
+      try {
+        this.currentAudio.pause();
+        this.currentAudio.currentTime = 0;
+        this.currentAudio.src = "";
+      } catch {
+        /* noop */
+      }
+      this.currentAudio = null;
+    }
     if (!this.current) return;
     if (this.current.abort) {
       try {
@@ -873,21 +932,12 @@ export class RoomEngine {
         /* noop */
       }
     }
-    if (this.currentAudio) {
-      try {
-        this.currentAudio.pause();
-      } catch {
-        /* noop */
-      }
-      this.currentAudio = null;
-    }
-    if ("speechSynthesis" in window) window.speechSynthesis.cancel();
     this.current.finish(true);
   }
 
   private bargeIn() {
     const cur = this.current;
-    if (!cur) return;
+    if (!cur || cur.speaker === "moderator" || this.phase !== "discussion") return;
     this.cancelCurrent();
     this.events.push({
       at: this.nowSec(),
@@ -1110,7 +1160,7 @@ export class RoomEngine {
       case "discussion": {
         if (this.busy) break;
         // barge-in: sustained student voice while an AI speaks
-        if (this.current && this.voiceActive && performance.now() > this.suppressBargeUntil) {
+        if (this.current && this.current.speaker !== "moderator" && this.voiceActive && performance.now() > this.suppressBargeUntil) {
           this.bargeIn();
           this.openUtterance();
         }
