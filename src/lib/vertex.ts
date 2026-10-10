@@ -1,12 +1,17 @@
 import { GoogleAuth } from "google-auth-library";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+
+const execFileAsync = promisify(execFile);
 
 /**
  * Server-side Vertex AI and Cloud TTS client for GD Arena.
  * Authenticates using Google Application Default Credentials, service account key file,
  * or gcloud CLI environment on Google Cloud.
+ *
+ * Project id comes from GCP_PROJECT_ID, else from the credentials / gcloud config. Nothing is hardcoded.
  */
 
-const PROJECT_ID = process.env.GCP_PROJECT_ID || "project-5d83834f-f05b-4854-823";
 const LOCATION = process.env.GCP_LOCATION || "us-central1";
 
 const auth = new GoogleAuth({
@@ -15,14 +20,34 @@ const auth = new GoogleAuth({
 
 let cachedToken: string | null = null;
 let tokenExpiresAt = 0;
+let tokenInflight: Promise<string> | null = null;
+let projectInflight: Promise<string> | null = null;
 
-export async function getAccessToken(): Promise<string> {
-  // Use in-memory cached token if valid for at least 5 minutes
-  if (cachedToken && Date.now() < tokenExpiresAt - 300_000) {
-    return cachedToken;
+export function getProjectId(): Promise<string> {
+  if (process.env.GCP_PROJECT_ID) return Promise.resolve(process.env.GCP_PROJECT_ID);
+  if (!projectInflight) {
+    projectInflight = (async () => {
+      try {
+        const id = await auth.getProjectId();
+        if (id) return id;
+      } catch {
+        /* fall through to gcloud config */
+      }
+      try {
+        const { stdout } = await execFileAsync("gcloud", ["config", "get-value", "project"], { timeout: 6000 });
+        if (stdout.trim()) return stdout.trim();
+      } catch {
+        /* handled below */
+      }
+      projectInflight = null;
+      throw new Error("No GCP project configured. Set GCP_PROJECT_ID in .env.local.");
+    })();
   }
+  return projectInflight;
+}
 
-  // 1. Try google-auth-library
+async function fetchToken(): Promise<string> {
+  // 1. google-auth-library (ADC / service account)
   try {
     const client = await auth.getClient();
     const token = await client.getAccessToken();
@@ -35,10 +60,10 @@ export async function getAccessToken(): Promise<string> {
     console.warn("GoogleAuth getAccessToken failed, checking gcloud CLI fallback:", authErr);
   }
 
-  // 2. Fallback to gcloud CLI
+  // 2. gcloud CLI, asynchronous so the Node event loop is never blocked
   try {
-    const { execSync } = await import("child_process");
-    const cliToken = execSync("gcloud auth print-access-token", { encoding: "utf8", timeout: 4000 }).trim();
+    const { stdout } = await execFileAsync("gcloud", ["auth", "print-access-token"], { timeout: 8000 });
+    const cliToken = stdout.trim();
     if (cliToken) {
       cachedToken = cliToken;
       tokenExpiresAt = Date.now() + 1800_000; // 30 mins
@@ -51,12 +76,30 @@ export async function getAccessToken(): Promise<string> {
   throw new Error("Failed to retrieve Google Cloud access token. Ensure credentials are configured.");
 }
 
+export async function getAccessToken(): Promise<string> {
+  // Use in-memory cached token if valid for at least 5 minutes
+  if (cachedToken && Date.now() < tokenExpiresAt - 300_000) return cachedToken;
+  // De-duplicate concurrent refreshes so a burst of requests spawns one auth call, not many.
+  if (!tokenInflight) tokenInflight = fetchToken().finally(() => (tokenInflight = null));
+  return tokenInflight;
+}
+
+/** Pre-warm so the first real request (the moderator's opening) is not paying cold-auth latency. */
+export function warmUp(): void {
+  void getAccessToken().catch(() => undefined);
+  void getProjectId().catch(() => undefined);
+}
+warmUp();
+
 export interface VertexGenerateOptions {
   model?: string;
   systemPrompt?: string;
   temperature?: number;
   maxTokens?: number;
   jsonMode?: boolean;
+  /** 0 disables Gemini 2.5 thinking: much lower latency for short conversational turns. */
+  thinkingBudget?: number;
+  signal?: AbortSignal;
 }
 
 export async function generateWithVertex(
@@ -64,17 +107,17 @@ export async function generateWithVertex(
   options: VertexGenerateOptions = {},
 ): Promise<string> {
   const model = options.model || "gemini-2.5-flash";
-  const token = await getAccessToken();
+  const [token, PROJECT_ID] = await Promise.all([getAccessToken(), getProjectId()]);
 
   const url = `https://${LOCATION}-aiplatform.googleapis.com/v1/projects/${PROJECT_ID}/locations/${LOCATION}/publishers/google/models/${model}:generateContent`;
 
-  const body: Record<string, unknown> = {
-    contents,
-    generationConfig: {
-      temperature: options.temperature ?? 0.7,
-      maxOutputTokens: options.maxTokens ?? 1024,
-    },
+  const generationConfig: Record<string, unknown> = {
+    temperature: options.temperature ?? 0.7,
+    maxOutputTokens: options.maxTokens ?? 1024,
   };
+  if (options.thinkingBudget !== undefined) generationConfig.thinkingConfig = { thinkingBudget: options.thinkingBudget };
+
+  const body: Record<string, unknown> = { contents, generationConfig };
 
   if (options.systemPrompt) {
     body.systemInstruction = {
@@ -83,7 +126,7 @@ export async function generateWithVertex(
   }
 
   if (options.jsonMode) {
-    (body.generationConfig as Record<string, unknown>).responseMimeType = "application/json";
+    generationConfig.responseMimeType = "application/json";
   }
 
   const res = await fetch(url, {
@@ -94,6 +137,7 @@ export async function generateWithVertex(
       "X-Goog-User-Project": PROJECT_ID,
     },
     body: JSON.stringify(body),
+    signal: options.signal,
   });
 
   if (!res.ok) {
@@ -155,7 +199,7 @@ export async function synthesizeSpeech(
   speaker: string,
   lang: "en" | "hinglish" = "en",
 ): Promise<string> {
-  const token = await getAccessToken();
+  const [token, PROJECT_ID] = await Promise.all([getAccessToken(), getProjectId()]);
   const cfg = CLOUD_TTS_VOICES[speaker] || CLOUD_TTS_VOICES.moderator;
   const isHi = lang === "hinglish";
   const voiceName = isHi ? cfg.hi : cfg.en;

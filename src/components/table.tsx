@@ -1,8 +1,21 @@
 "use client";
 
-import type { CSSProperties, ReactNode } from "react";
+import { useSyncExternalStore, type CSSProperties, type ReactNode } from "react";
 import { MODERATOR, PERSONA_BY_ID } from "@/lib/personas";
 import type { PersonaId, SpeakerId } from "@/lib/types";
+
+/** True on phone-width viewports. Server-render safe: starts false, corrects on hydration. */
+export function useIsNarrow(maxWidth = 640): boolean {
+  return useSyncExternalStore(
+    (cb) => {
+      const mq = window.matchMedia(`(max-width: ${maxWidth}px)`);
+      mq.addEventListener("change", cb);
+      return () => mq.removeEventListener("change", cb);
+    },
+    () => window.matchMedia(`(max-width: ${maxWidth}px)`).matches,
+    () => false,
+  );
+}
 
 export function AiBadge({ label = "AI" }: { label?: string }) {
   return (
@@ -67,16 +80,21 @@ export function Seat({ id, x, y, speaking, bid = 0, level = 0, cut, bubble, orb 
   );
 }
 
-/** Seats evenly around an ellipse. 90° is the bottom (the student), the moderator sits opposite. */
-export function layoutSeats(aiCount: number): { id: "student" | "moderator" | number; x: number; y: number }[] {
+/**
+ * Seats evenly around an ellipse. 90° is the bottom (the student), the moderator sits opposite.
+ * `narrow` switches to a tall ellipse that fits a portrait phone screen.
+ */
+export function layoutSeats(aiCount: number, narrow = false): { id: "student" | "moderator" | number; x: number; y: number }[] {
   const total = aiCount + 2;
   const out: { id: "student" | "moderator" | number; x: number; y: number }[] = [];
   const modIdx = Math.floor(total / 2);
+  const rx = narrow ? 36 : 41;
+  const ry = narrow ? 41 : 40;
   let ai = 0;
   for (let k = 0; k < total; k++) {
     const theta = ((90 + (k * 360) / total) * Math.PI) / 180;
-    const x = 50 + 41 * Math.cos(theta);
-    const y = 50 + 40 * Math.sin(theta);
+    const x = 50 + rx * Math.cos(theta);
+    const y = 50 + ry * Math.sin(theta);
     if (k === 0) out.push({ id: "student", x, y });
     else if (k === modIdx) out.push({ id: "moderator", x, y });
     else out.push({ id: ai++, x, y });

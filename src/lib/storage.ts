@@ -1,7 +1,9 @@
 import type { RoomConfig, SessionRecord } from "./types";
+import type { AiReport } from "./report";
 
 const cfgKey = (id: string) => `gdarena:config:${id}`;
 const sesKey = (id: string) => `gdarena:session:${id}`;
+const aiKey = (id: string) => `gdarena:ai:${id}`;
 const INDEX_KEY = "gdarena:sessions";
 
 function safeGet<T>(key: string): T | null {
@@ -25,6 +27,8 @@ function safeSet(key: string, value: unknown) {
 export const saveConfig = (c: RoomConfig) => safeSet(cfgKey(c.id), c);
 export const loadConfig = (id: string) => safeGet<RoomConfig>(cfgKey(id));
 export const loadSession = (id: string) => safeGet<SessionRecord>(sesKey(id));
+export const loadAiReport = (id: string) => safeGet<AiReport>(aiKey(id));
+export const saveAiReport = (id: string, r: AiReport) => safeSet(aiKey(id), r);
 
 export function saveSession(s: SessionRecord) {
   safeSet(sesKey(s.config.id), s);

@@ -31,6 +31,7 @@ export default function SetupPage() {
   const [nudges, setNudges] = useState<NudgeLevel>("light");
   const [captions, setCaptions] = useState(true);
   const [fishbowl, setFishbowl] = useState(false);
+  const [camera, setCamera] = useState(false);
   const [goal, setGoal] = useState(GOALS[1]);
   const [consent, setConsent] = useState(false);
 
@@ -69,6 +70,7 @@ export default function SetupPage() {
       interruption,
       nudges,
       captions,
+      camera,
       goal,
       createdAt: Date.now(),
     };
@@ -100,7 +102,6 @@ export default function SetupPage() {
                     className="chip"
                     role="tab"
                     id={`format-${f.id}`}
-                    aria-pressed={format === f.id && !useCustom}
                     aria-selected={format === f.id}
                     onClick={() => {
                       setFormat(f.id);
@@ -113,22 +114,51 @@ export default function SetupPage() {
                     {f.label}
                   </button>
                 ))}
-                <button className="chip" id="format-custom" aria-pressed={useCustom} onClick={() => setUseCustom(true)}>
-                  ✎ Custom topic
-                </button>
               </div>
 
+              <div className="topic-grid">
+                {topics.map((t) => (
+                  <button
+                    key={t.id}
+                    className="topic-card"
+                    id={`topic-${t.id}`}
+                    aria-pressed={!useCustom && topicId === t.id}
+                    onClick={() => {
+                      setTopicId(t.id);
+                      setUseCustom(false);
+                    }}
+                  >
+                    <b>{t.title}</b>
+                    <span>{t.hook}</span>
+                  </button>
+                ))}
+              </div>
+              {!useCustom && picked?.brief ? (
+                <div className="brief">
+                  <b>Case facts: </b>
+                  {picked.brief}
+                </div>
+              ) : null}
+
+              <div className="field-label" id="custom-label">
+                Or write your own topic
+              </div>
+              <input
+                className={`input custom-topic ${useCustom ? "active" : ""}`}
+                id="custom-topic"
+                placeholder="e.g. Should colleges make attendance optional?"
+                value={custom}
+                maxLength={160}
+                onChange={(e) => {
+                  setCustom(e.target.value);
+                  setUseCustom(e.target.value.trim().length > 0);
+                }}
+                onFocus={() => custom.trim() && setUseCustom(true)}
+                aria-labelledby="custom-label"
+                style={{ marginTop: 6 }}
+              />
               {useCustom ? (
                 <>
-                  <input
-                    className="input"
-                    id="custom-topic"
-                    placeholder="e.g. Should colleges make attendance optional?"
-                    value={custom}
-                    maxLength={160}
-                    onChange={(e) => setCustom(e.target.value)}
-                    aria-label="Custom topic"
-                  />
                   <textarea
                     className="textarea"
                     placeholder="Optional: add case facts the panel should know (numbers, constraints, stakeholders)."
@@ -137,25 +167,11 @@ export default function SetupPage() {
                     onChange={(e) => setBrief(e.target.value)}
                     aria-label="Optional case facts"
                   />
+                  <p className="sub" style={{ marginTop: 8, marginBottom: 0, fontSize: 13 }}>
+                    Using your custom topic. Pick a card above to switch back.
+                  </p>
                 </>
-              ) : (
-                <>
-                  <div className="topic-grid">
-                    {topics.map((t) => (
-                      <button key={t.id} className="topic-card" id={`topic-${t.id}`} aria-pressed={topicId === t.id} onClick={() => setTopicId(t.id)}>
-                        <b>{t.title}</b>
-                        <span>{t.hook}</span>
-                      </button>
-                    ))}
-                  </div>
-                  {picked?.brief ? (
-                    <div className="brief">
-                      <b>Case facts: </b>
-                      {picked.brief}
-                    </div>
-                  ) : null}
-                </>
-              )}
+              ) : null}
             </section>
 
             <section className="glass panel" aria-labelledby="s-panel">
@@ -258,7 +274,15 @@ export default function SetupPage() {
                 <button className="chip" id="toggle-captions" aria-pressed={captions} onClick={() => setCaptions((v) => !v)}>
                   Live captions
                 </button>
+                <button className="chip" id="toggle-camera" aria-pressed={camera} onClick={() => setCamera((v) => !v)} title="Eye contact, expression and posture, analysed on your device">
+                  📷 Body-language coach (camera)
+                </button>
               </div>
+              {camera ? (
+                <p className="sub" style={{ marginTop: 10, marginBottom: 0 }}>
+                  Uses your camera to coach eye contact, expression, posture and gestures. Everything is analysed in your browser: no video or image is uploaded or stored, only summary numbers.
+                </p>
+              ) : null}
 
               <div className="field-label">What do you want to work on?</div>
               <div className="row">
@@ -305,10 +329,15 @@ export default function SetupPage() {
               <span>Format</span>
               <span>{fishbowl ? "Fishbowl" : "Direct join"}</span>
             </div>
-            <label className="consent" htmlFor="consent">
+            <div className="sum-row">
+              <span>Camera coach</span>
+              <span>{camera ? "On (private, on-device)" : "Off"}</span>
+            </div>
+            <label className="consent">
               <input id="consent" type="checkbox" checked={consent} onChange={(e) => setConsent(e.target.checked)} />
               <span>
                 <b>I understand every other participant is an AI.</b> I am the only human in this room. My microphone is used only for this session.
+                {camera ? " My camera is analysed on this device only; no video is uploaded or saved." : ""}
               </span>
             </label>
             <button className="btn btn-primary btn-lg" style={{ width: "100%" }} id="start-room" disabled={!valid} onClick={start}>

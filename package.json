@@ -6,9 +6,11 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "postinstall": "mkdir -p public/mediapipe && cp -r node_modules/@mediapipe/tasks-vision/wasm public/mediapipe/"
   },
   "dependencies": {
+    "@mediapipe/tasks-vision": "^1.1.0",
     "firebase": "^12.19.0",
     "google-auth-library": "^11.2.0",
     "next": "16.4.0",

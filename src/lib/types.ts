@@ -21,6 +21,8 @@ export interface RoomConfig {
   interruption: Interruption;
   nudges: NudgeLevel;
   captions: boolean;
+  /** Opt-in on-device camera analysis (eye contact, expression, posture). Video never leaves the browser. */
+  camera?: boolean;
   goal: string;
   createdAt: number;
 }
@@ -53,6 +55,46 @@ export interface InterruptionEvent {
   outcome?: "yielded" | "held";
 }
 
+export type BodyMomentKind = "away" | "down" | "slouch" | "tense" | "smile" | "fidget";
+
+export interface BodyMoment {
+  /** seconds since session start */
+  t: number;
+  kind: BodyMomentKind;
+  label: string;
+}
+
+/**
+ * Aggregated, on-device body-language measurements. Only these numbers are stored; no frames or video.
+ * All percentages are of the analysed time (seconds).
+ */
+export interface BodyLanguage {
+  seconds: number;
+  /** % of analysed time a face was visible */
+  facePct: number;
+  /** % of time the head/eyes were pointed at the camera (proxy for eye contact with the panel) */
+  eyeContactPct: number;
+  lookingDownPct: number;
+  lookingAwayPct: number;
+  smilePct: number;
+  tensePct: number;
+  neutralPct: number;
+  /** 0..1, how much facial expression varied (flat delivery scores low) */
+  expressiveness: number;
+  /** % of time shoulders/upper body were visible */
+  bodyVisiblePct: number;
+  /** 0..10 */
+  postureScore: number;
+  slouchPct: number;
+  leanInPct: number;
+  shoulderTiltDeg: number;
+  /** 0..1 restless upper-body movement */
+  fidget: number;
+  /** % of time hands were visibly moving (gesturing) */
+  gesturePct: number;
+  moments: BodyMoment[];
+}
+
 export interface SessionRecord {
   config: RoomConfig;
   turns: Turn[];
@@ -62,4 +104,5 @@ export interface SessionRecord {
   endedAt: number;
   detectedLang: Lang;
   sample?: boolean;
+  body?: BodyLanguage;
 }

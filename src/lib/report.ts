@@ -7,7 +7,7 @@
  */
 import { PERSONA_BY_ID } from "./personas";
 import { countFillers, wordCount } from "./lang";
-import type { PersonaId, SessionRecord, SpeakerId, Turn } from "./types";
+import type { BodyLanguage, BodyMoment, PersonaId, SessionRecord, SpeakerId, Turn } from "./types";
 
 export interface Quote {
   turnId: number;
@@ -39,6 +39,27 @@ export interface Opening {
   ideal: string;
 }
 
+export interface BodyCard {
+  id: "eye" | "expression" | "posture" | "composure";
+  title: string;
+  /** null when there was not enough usable data to judge honestly */
+  score: number | null;
+  verdict: "strong" | "okay" | "weak" | "unknown";
+  summary: string;
+  tryThis: string;
+  stats: { label: string; value: string }[];
+}
+
+export interface BodyReport {
+  /** 0..100, from the cards that could be scored */
+  overall: number | null;
+  cards: BodyCard[];
+  moments: BodyMoment[];
+  /** Gemini's coaching paragraph grounded in the numbers above (when the analyst ran) */
+  coaching?: string;
+  seconds: number;
+}
+
 export interface Report {
   airtime: { id: SpeakerId; label: string; seconds: number; pct: number; turns: number }[];
   delivery: {
@@ -55,6 +76,9 @@ export interface Report {
   overall: number;
   strengths: string[];
   fixes: string[];
+  /** who produced the scores: the Gemini analyst, or the offline keyword heuristics */
+  source?: "gemini" | "heuristic";
+  body?: BodyReport;
 }
 
 const clamp = (n: number, a = 0, b = 10) => Math.min(b, Math.max(a, n));
@@ -356,5 +380,232 @@ export function buildReport(s: SessionRecord): Report {
     overall,
     strengths: sorted.filter((f) => f.score >= 6).slice(0, 3).map((f) => f.title),
     fixes: [...sorted].reverse().filter((f) => f.score < 6.5).slice(0, 3).map((f) => f.title),
+    source: "heuristic",
+    body: s.body ? buildBodyReport(s.body) : undefined,
   };
 }
+
+// ───────────────────────────── body language ─────────────────────────────
+
+const pct = (n: number) => `${Math.round(n)}%`;
+const bverdict = (n: number): BodyCard["verdict"] => (n >= 7 ? "strong" : n >= 4.5 ? "okay" : "weak");
+
+export function buildBodyReport(b: BodyLanguage): BodyReport {
+  const cards: BodyCard[] = [];
+  const faceOk = b.facePct >= 40;
+
+  // Eye contact: in a real GD you glance at people, so ~65-75% facing the panel is the sweet spot.
+  if (faceOk) {
+    const score = clamp(b.eyeContactPct / 7 - Math.max(0, b.lookingDownPct - 15) / 10);
+    const main =
+      b.lookingDownPct > 20
+        ? `You looked down for ${pct(b.lookingDownPct)} of the time, which reads as reading notes or low confidence.`
+        : b.lookingAwayPct > 25
+          ? `Your eyes drifted off to the side ${pct(b.lookingAwayPct)} of the time.`
+          : `You faced the panel ${pct(b.eyeContactPct)} of the time.`;
+    cards.push({
+      id: "eye",
+      title: "Eye contact",
+      score,
+      verdict: bverdict(score),
+      summary: `${main} Roughly 60 to 75% is the sweet spot: steady, with natural glances at whoever you are addressing.`,
+      tryThis: "Land each key sentence on one person's face for a full beat, then move on. Keep notes face-up at eye level, not in your lap.",
+      stats: [
+        { label: "Facing panel", value: pct(b.eyeContactPct) },
+        { label: "Looking down", value: pct(b.lookingDownPct) },
+        { label: "Looking away", value: pct(b.lookingAwayPct) },
+      ],
+    });
+
+    const eScore = clamp(4 + b.expressiveness * 4 + (Math.min(b.smilePct, 35) / 35) * 2 - b.tensePct / 15);
+    cards.push({
+      id: "expression",
+      title: "Expression & presence",
+      score: eScore,
+      verdict: bverdict(eScore),
+      summary:
+        b.tensePct > 25
+          ? `You looked tense or frowning ${pct(b.tensePct)} of the time; it can read as defensive even when your words are calm.`
+          : b.expressiveness < 0.25
+            ? `Your face stayed quite flat (${pct(b.neutralPct)} neutral). Flat delivery makes strong points land softer.`
+            : `Good facial range: ${pct(b.smilePct)} warm, ${pct(b.tensePct)} tense, with natural variation.`,
+      tryThis: "Smile briefly when you agree or open a point, and relax your brow when you disagree: it keeps challenges polite and credible.",
+      stats: [
+        { label: "Warm / smiling", value: pct(b.smilePct) },
+        { label: "Tense", value: pct(b.tensePct) },
+        { label: "Expressiveness", value: `${Math.round(b.expressiveness * 100)}/100` },
+      ],
+    });
+  } else {
+    for (const [id, title] of [
+      ["eye", "Eye contact"],
+      ["expression", "Expression & presence"],
+    ] as const) {
+      cards.push({
+        id,
+        title,
+        score: null,
+        verdict: "unknown",
+        summary: `Your face was visible only ${pct(b.facePct)} of the time, so this cannot be judged fairly.`,
+        tryThis: "Sit so your face is centred and well lit, about an arm's length from the camera.",
+        stats: [{ label: "Face visible", value: pct(b.facePct) }],
+      });
+    }
+  }
+
+  if (b.bodyVisiblePct >= 25) {
+    const pScore = b.postureScore;
+    cards.push({
+      id: "posture",
+      title: "Posture",
+      score: pScore,
+      verdict: bverdict(pScore),
+      summary:
+        b.slouchPct > 25
+          ? `You slouched for ${pct(b.slouchPct)} of the time. Slumping shrinks your presence on camera and in a real room.`
+          : b.shoulderTiltDeg > 8
+            ? `Your shoulders were tilted about ${b.shoulderTiltDeg.toFixed(0)}°. Level shoulders look more composed.`
+            : `Upright and composed: slouching only ${pct(b.slouchPct)} of the time.`,
+      tryThis: "Sit tall with both feet down and shoulders level. Lean in slightly (not back) when making your main point.",
+      stats: [
+        { label: "Slouching", value: pct(b.slouchPct) },
+        { label: "Leaning in", value: pct(b.leanInPct) },
+        { label: "Shoulder tilt", value: `${b.shoulderTiltDeg.toFixed(1)}°` },
+      ],
+    });
+    const cScore = clamp(10 - b.fidget * 7 + (b.gesturePct >= 5 && b.gesturePct <= 45 ? 1 : 0));
+    cards.push({
+      id: "composure",
+      title: "Composure & gestures",
+      score: cScore,
+      verdict: bverdict(cScore),
+      summary:
+        b.fidget > 0.55
+          ? `Your upper body was restless (${Math.round(b.fidget * 100)}/100). Fidgeting leaks nervousness.`
+          : b.gesturePct < 5
+            ? "You were calm, but your hands stayed out of play. Purposeful gestures add emphasis and energy."
+            : `Calm and expressive: gesturing ${pct(b.gesturePct)} of the time with little restlessness.`,
+      tryThis: "Keep hands visible and use one clear gesture per key point (counting a list, showing contrast). Park them still between points.",
+      stats: [
+        { label: "Restlessness", value: `${Math.round(b.fidget * 100)}/100` },
+        { label: "Gesturing", value: pct(b.gesturePct) },
+      ],
+    });
+  } else {
+    for (const [id, title] of [
+      ["posture", "Posture"],
+      ["composure", "Composure & gestures"],
+    ] as const) {
+      cards.push({
+        id,
+        title,
+        score: null,
+        verdict: "unknown",
+        summary: `Your shoulders were in frame only ${pct(b.bodyVisiblePct)} of the time. Step back so your head, shoulders and hands are visible.`,
+        tryThis: "Position the camera so it frames you from the chest up, with room for your hands.",
+        stats: [{ label: "Upper body in frame", value: pct(b.bodyVisiblePct) }],
+      });
+    }
+  }
+
+  const scored = cards.filter((c): c is BodyCard & { score: number } => c.score !== null);
+  return {
+    overall: scored.length ? Math.round((scored.reduce((a, c) => a + c.score, 0) / scored.length) * 10) : null,
+    cards,
+    moments: b.moments,
+    seconds: b.seconds,
+  };
+}
+
+// ───────────────────────────── Gemini analyst merge ─────────────────────────────
+
+interface AiFeedback {
+  id?: string;
+  title?: string;
+  score?: number;
+  summary?: string;
+  tryThis?: string;
+  evidence?: { turnId?: number; text?: string }[];
+}
+interface AiOpening {
+  id?: string;
+  title?: string;
+  contextTurnId?: number;
+  ideal?: string;
+}
+export interface AiReport {
+  strengths?: string[];
+  fixes?: string[];
+  bodyLanguageCoaching?: string;
+  feedback?: AiFeedback[];
+  openings?: AiOpening[];
+}
+
+const str = (v: unknown, max = 400) => (typeof v === "string" ? v.trim().slice(0, max) : "");
+const strs = (v: unknown, n: number) => (Array.isArray(v) ? v.map((x) => str(x, 140)).filter(Boolean).slice(0, n) : []);
+
+/**
+ * Overlays the Gemini analyst onto the deterministic report. The evidence guarantee still holds: every quote
+ * must be a verbatim substring of the student's own turn, or it is discarded and the heuristic evidence for
+ * that criterion is kept. Airtime/delivery numbers always stay measured, never model-written.
+ */
+export function mergeAiReport(base: Report, ai: AiReport, s: SessionRecord): Report {
+  const turns = s.turns;
+  const feedback: Feedback[] = base.feedback.map((bf) => {
+    const af = (ai.feedback ?? []).find((x) => x.id === bf.id);
+    if (!af) return bf;
+
+    const evidence: Quote[] = [];
+    for (const ev of (af.evidence ?? []).slice(0, 2)) {
+      const text = str(ev.text, 400);
+      const turn = turns.find((t) => t.id === ev.turnId);
+      if (!text || !turn || turn.speaker !== "student" || !verifyQuote(turns, turn.id, text)) continue;
+      evidence.push({ turnId: turn.id, speaker: turn.speaker, t: turn.tStart, text, verified: true });
+    }
+
+    const score = typeof af.score === "number" && Number.isFinite(af.score) ? clamp(af.score) : bf.score;
+    return {
+      id: bf.id,
+      title: bf.title,
+      score,
+      verdict: verdict10(score),
+      summary: str(af.summary) || bf.summary,
+      tryThis: str(af.tryThis) || bf.tryThis,
+      evidence: evidence.length ? evidence : bf.evidence,
+    };
+  });
+
+  const openings: Opening[] = [];
+  for (const ao of (ai.openings ?? []).slice(0, 5)) {
+    const turn = turns.find((t) => t.id === ao.contextTurnId);
+    const ideal = str(ao.ideal, 600);
+    if (!turn || !ideal) continue;
+    openings.push({
+      id: `ai-${turn.id}-${openings.length}`,
+      t: turn.tStart,
+      kind: "unchallenged_claim",
+      title: str(ao.title, 140) || "A moment you could have jumped in",
+      context: mkQuote(turns, turn),
+      ideal,
+    });
+  }
+  openings.sort((a, b) => a.t - b.t);
+
+  const overall = Math.round((feedback.reduce((a, f) => a + f.score, 0) / feedback.length) * 10);
+  const strengths = strs(ai.strengths, 4);
+  const fixes = strs(ai.fixes, 4);
+  const coaching = str(ai.bodyLanguageCoaching, 700);
+
+  return {
+    ...base,
+    feedback,
+    overall,
+    openings: openings.length ? openings : base.openings,
+    strengths: strengths.length ? strengths : base.strengths,
+    fixes: fixes.length ? fixes : base.fixes,
+    source: "gemini",
+    body: base.body ? { ...base.body, coaching: coaching || undefined } : base.body,
+  };
+}
+
+const verdict10 = (n: number): Feedback["verdict"] => (n >= 7 ? "strong" : n >= 4.5 ? "okay" : "weak");

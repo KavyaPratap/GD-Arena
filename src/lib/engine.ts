@@ -14,7 +14,7 @@
 import { MODERATOR, MOD_LINES, PERSONA_BY_ID, WHISPERS, fillTemplate } from "./personas";
 import { detectLang, wordCount, countFillers } from "./lang";
 import { saveSession } from "./storage";
-import type { InterruptionEvent, Lang, PersonaId, RoomConfig, SpeakerId, Turn, TurnKind } from "./types";
+import type { BodyLanguage, InterruptionEvent, Lang, PersonaId, RoomConfig, SpeakerId, Turn, TurnKind } from "./types";
 
 export type Phase = "lobby" | "opening" | "prep" | "watch" | "discussion" | "closing" | "ended";
 export type FloorKind = "none" | "student" | "ai" | "moderator";
@@ -197,6 +197,9 @@ export class RoomEngine {
 
   /** Ask for the microphone and start metering. Safe to call in the lobby. */
   async initMic(): Promise<void> {
+    // Warm the moderator's voice while the student is still on the lobby screen, so the opening is
+    // human-sounding from the first word instead of waiting on a cold server round-trip.
+    this.prefetchModerator("start");
     if (!navigator.mediaDevices?.getUserMedia) {
       this.health.mic = "unavailable";
       this.startTick();
@@ -294,6 +297,11 @@ export class RoomEngine {
 
   setPatience(ms: number) {
     (this.cfg as { patienceMs: number }).patienceMs = ms;
+  }
+
+  /** Supplies the on-device body-language summary that is saved with the session when it ends. */
+  setBodyProvider(fn: () => BodyLanguage | undefined) {
+    this.bodyProvider = fn;
   }
 
   destroy() {
@@ -452,9 +460,16 @@ export class RoomEngine {
   }
 
   private onRecog(e: SREvent) {
-    // While an AI is audible the recogniser mostly hears the speakers, so ignore it.
-    if (this.current || this.paused) return;
+    if (this.paused) return;
     if (!(this.phase === "discussion" || (this.phase === "closing" && this.studentClosingActive))) return;
+    // If an AI is currently speaking, user voice triggers immediate barge-in so their opening words aren't lost
+    if (this.current) {
+      if (performance.now() > this.suppressBargeUntil) {
+        this.bargeIn();
+      } else {
+        return;
+      }
+    }
     let interim = "";
     for (let i = e.resultIndex; i < e.results.length; i++) {
       const res = e.results[i];
@@ -497,10 +512,12 @@ export class RoomEngine {
 
   private updateVoice(dt: number) {
     const aiAudible = !!this.current;
-    const thr = this.threshold * (aiAudible ? 2 : 1);
+    // Without headphones the AI's own voice leaks into the mic. Stricter threshold + longer hold while an
+    // AI is audible so it does not mistake itself for the student and cut itself off.
+    const thr = this.threshold * (aiAudible ? 2.6 : 1);
     const loud = this.rms > thr;
     this.loudMs = loud ? Math.min(1000, this.loudMs + dt) : Math.max(0, this.loudMs - dt * 2);
-    const need = aiAudible ? 350 : 180;
+    const need = aiAudible ? 420 : 180;
     const recogFresh = !aiAudible && performance.now() - this.lastRecogAt < 900;
     this.voiceActive = this.loudMs >= need || recogFresh;
     if (this.voiceActive) this.lastVoiceAt = performance.now();
@@ -556,7 +573,7 @@ export class RoomEngine {
     this.lastAnyEnd = performance.now();
     this.lastStudentEnd = tEnd;
     this.lastSpokeAt.student = tEnd;
-    this.gapJitter = 300 + Math.random() * 500;
+    this.gapJitter = 80 + Math.random() * 150;
     if (this.cfg.language === "auto") {
       const recent = this.turns.filter((t) => t.speaker === "student").slice(-2);
       const hits = recent.filter((t) => t.lang === "hinglish").length;
@@ -604,6 +621,107 @@ export class RoomEngine {
 
   private currentAudio: HTMLAudioElement | null = null;
   private audioCache = new Map<string, string>();
+  private ttsInflight = new Map<string, Promise<string | null>>();
+  private bodyProvider?: () => BodyLanguage | undefined;
+
+  private ttsKey(speaker: PersonaId | "moderator", text: string): string {
+    return `${speaker}:${this.lang}:${text.trim()}`;
+  }
+
+  /**
+   * Cloud TTS with a shared cache, request de-duplication and one retry. Resolves null only when speech
+   * genuinely could not be produced, which is the only case that falls back to the robotic browser voice.
+   */
+  private fetchTTS(speaker: PersonaId | "moderator", text: string): Promise<string | null> {
+    const key = this.ttsKey(speaker, text);
+    const hit = this.audioCache.get(key);
+    if (hit) return Promise.resolve(hit);
+    const running = this.ttsInflight.get(key);
+    if (running) return running;
+    const lang = this.lang;
+    const p = (async () => {
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const ctl = new AbortController();
+        const timer = setTimeout(() => ctl.abort(), 12000);
+        try {
+          const res = await fetch("/api/tts", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ text, speaker, lang }),
+            signal: ctl.signal,
+          });
+          if (res.ok) {
+            const d = await res.json();
+            if (d?.audioContent) {
+              this.audioCache.set(key, d.audioContent);
+              return d.audioContent as string;
+            }
+          }
+          if (res.status === 429 || res.status === 403 || res.status === 400) break;
+        } catch {
+          /* timeout or network: retry once */
+        } finally {
+          clearTimeout(timer);
+        }
+      }
+      return null;
+    })().finally(() => this.ttsInflight.delete(key));
+    this.ttsInflight.set(key, p);
+    return p;
+  }
+
+  private prefetchTTS(speaker: PersonaId | "moderator", text: string) {
+    if (typeof window === "undefined" || this.destroyed || this.health.net !== "online") return;
+    void this.fetchTTS(speaker, text);
+  }
+
+  private prefetchModerator(which: "start" | "discussion") {
+    const L = MOD_LINES[this.lang];
+    if (which === "start") {
+      const mins = Math.round(this.cfg.durationSec / 60);
+      this.prefetchTTS("moderator", L.opening(this.cfg.topic, mins, this.cfg.fishbowl));
+      this.prefetchTTS("moderator", this.cfg.fishbowl ? L.fishbowlJoin : L.floorOpen);
+    } else {
+      [L.warn, L.closingCall, L.studentCall, L.outro, L.invite].forEach((l) => this.prefetchTTS("moderator", l));
+    }
+  }
+
+  /**
+   * Ask Gemini for what this persona would really say right now (or their closing statement). Audio is
+   * returned in the same round-trip and cached, so playback starts the instant the line is ready.
+   * Falls back to the scripted line if the model is slow or unreachable.
+   */
+  private async llmLine(id: PersonaId, kind: "normal" | "closing", fallback: string): Promise<string> {
+    if (this.health.net !== "online" || typeof window === "undefined") return fallback;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 3200);
+    try {
+      const res = await fetch("/api/turn", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          topic: this.cfg.topic,
+          caseBrief: this.cfg.caseBrief,
+          panel: this.cfg.panel,
+          turns: this.turns.slice(-10),
+          speaker: id,
+          lang: this.lang,
+          kind,
+          withAudio: true,
+        }),
+        signal: controller.signal,
+      });
+      if (!res.ok) return fallback;
+      const data = await res.json();
+      if (typeof data?.text !== "string" || !data.text.trim()) return fallback;
+      if (data.audioContent) this.audioCache.set(this.ttsKey(id, data.text), data.audioContent);
+      return data.text;
+    } catch {
+      return fallback;
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
 
   private playSynth(cur: Current, text: string, speaker: PersonaId | "moderator") {
     const synth = "speechSynthesis" in window ? window.speechSynthesis : null;
@@ -700,11 +818,8 @@ export class RoomEngine {
       this.current = cur;
       this.emit();
 
-      // Try Cloud TTS (Studio-grade Chirp 3 HD) first for human-realistic speech
+      // Cloud TTS (Chirp 3 HD) first for human-realistic speech; browser voice is only the last resort.
       if (typeof window !== "undefined" && this.health.net === "online") {
-        const cacheKey = `${speaker}:${this.lang}:${text.trim()}`;
-        const cachedBase64 = this.audioCache.get(cacheKey);
-
         const playAudioBase64 = (base64: string) => {
           if (cur.done) return;
           try {
@@ -733,37 +848,15 @@ export class RoomEngine {
           }
         };
 
+        const cachedBase64 = this.audioCache.get(this.ttsKey(speaker, text));
         if (cachedBase64) {
           playAudioBase64(cachedBase64);
         } else {
-          const controller = new AbortController();
-          const timeout = setTimeout(() => controller.abort(), 8500);
-          cur.abort = () => {
-            clearTimeout(timeout);
-            controller.abort();
-          };
-
-          fetch("/api/tts", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ text, speaker, lang: this.lang }),
-            signal: controller.signal,
-          })
-            .then((res) => (res.ok ? res.json() : null))
-            .then((data) => {
-              clearTimeout(timeout);
-              if (cur.done) return;
-              if (data?.audioContent) {
-                this.audioCache.set(cacheKey, data.audioContent);
-                playAudioBase64(data.audioContent);
-              } else {
-                this.playSynth(cur, text, speaker);
-              }
-            })
-            .catch(() => {
-              clearTimeout(timeout);
-              if (!cur.done) this.playSynth(cur, text, speaker);
-            });
+          void this.fetchTTS(speaker, text).then((b64) => {
+            if (cur.done) return;
+            if (b64) playAudioBase64(b64);
+            else this.playSynth(cur, text, speaker);
+          });
         }
       } else {
         this.playSynth(cur, text, speaker);
@@ -835,6 +928,11 @@ export class RoomEngine {
     let bestScore = -1e9;
     for (const id of cands) {
       let s = (this.bids[id] ?? 0.3) + Math.random() * 0.25;
+      // If student just spoke, boost assertive candidates to immediately challenge/build on their point
+      if (last?.speaker === "student") {
+        const p = PERSONA_BY_ID[id];
+        s += (p.traits.urgency * 0.5 + p.traits.interrupts * 0.3);
+      }
       // Recency penalty so Vikram or any single persona doesn't dominate every round
       if (prevSpeakers.includes(id)) s -= 0.45;
       if (id === "vikram" && prevSpeakers.filter((sp) => sp === "vikram").length >= 1) s -= 0.6;
@@ -867,13 +965,13 @@ export class RoomEngine {
     };
 
     let source: string[];
-    if (pool.drift && Math.random() < p.traits.drift) {
+    if (lastStudent) {
+      // Human student just spoke: ALWAYS address their specific quote, NEVER drift
+      source = pool.toStudent;
+    } else if (pool.drift && Math.random() < p.traits.drift) {
       source = pool.drift;
       whisperOut.text = WHISPERS.drift;
       whisperOut.drift = true;
-    } else if (lastStudent) {
-      // Human student just spoke: always address their specific quote
-      source = pool.toStudent;
     } else if (lastAI && Math.random() < 0.65) {
       source = pool.toAI;
       whisperOut.text = WHISPERS.toAI(p.name, lastAI.name);
@@ -905,34 +1003,10 @@ export class RoomEngine {
       if (!id) return;
       const w: { text?: string; drift?: boolean } = {};
       let line = this.buildLine(id, w);
+      line = await this.llmLine(id, "normal", line);
 
-      if (this.health.net === "online" && typeof window !== "undefined") {
-        try {
-          const controller = new AbortController();
-          const timeout = setTimeout(() => controller.abort(), 6500);
-          const res = await fetch("/api/turn", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              topic: this.cfg.topic,
-              panel: this.cfg.panel,
-              turns: this.turns.slice(-6),
-              speaker: id,
-              lang: this.lang,
-            }),
-            signal: controller.signal,
-          });
-          clearTimeout(timeout);
-          if (res.ok) {
-            const data = await res.json();
-            if (data?.text) {
-              line = data.text;
-            }
-          }
-        } catch {
-          /* fallback to prebuilt line */
-        }
-      }
+      // The student started talking while the model was thinking: never talk over them.
+      if (this.phase === "discussion" && (this.utterOpen || this.voiceActive || this.destroyed)) return;
 
       this.pendingRedirect = !!w.drift && Math.random() < 0.6;
       this.chain++;
@@ -993,10 +1067,10 @@ export class RoomEngine {
     }
 
     const afterStudent = last?.speaker === "student";
-    // Give the human space: after student finishes, let floor pause at least 2.5s before AI speaks
-    const mult = this.chain >= 2 ? 2.5 : 1.2;
-    const studentGrace = Math.max(2400, this.cfg.patienceMs * 1.5);
-    const needed = afterStudent ? studentGrace + this.gapJitter : this.cfg.patienceMs * mult + this.gapJitter;
+    // Real GD floor dynamic: ~1 second decision window (~850ms - 1050ms) after human, ~520ms - 720ms between AI turns
+    const scale = clamp(this.cfg.patienceMs / 900, 0.6, 2.0);
+    const baseGap = afterStudent ? 920 : 540;
+    const needed = baseGap * scale + (this.gapJitter % 180);
     if (gap < needed) return;
     void this.aiTurn();
   }
@@ -1073,6 +1147,7 @@ export class RoomEngine {
 
   private beginDiscussion() {
     this.busy = false;
+    this.prefetchModerator("discussion");
     this.phase = "discussion";
     this.discStart = this.nowSec();
     this.lastStudentEnd = this.discStart;
@@ -1090,6 +1165,13 @@ export class RoomEngine {
     this.cancelCurrent();
     this.resetUtterance();
     const L = MOD_LINES[this.lang];
+    // Every panelist's closing is written by Gemini from what was actually said, generated in parallel
+    // while the moderator calls time. The scripted lines remain only as an offline fallback.
+    const closings = new Map<PersonaId, Promise<string>>();
+    for (const seat of this.cfg.panel) {
+      const scripted = fillTemplate(pick(PERSONA_BY_ID[seat].lines[this.lang].closing), { topic: this.topicShort() });
+      closings.set(seat, this.llmLine(seat, "closing", scripted));
+    }
     await this.say("moderator", L.closingCall, { kind: "closing" });
     const order: (PersonaId | "student")[] = [...this.cfg.panel];
     order.sort(() => Math.random() - 0.5);
@@ -1104,8 +1186,8 @@ export class RoomEngine {
         this.lastVoiceAt = 0;
         await new Promise<void>((res) => (this.resolveStudentClosing = res));
       } else {
-        const pool = PERSONA_BY_ID[seat].lines[this.lang].closing;
-        await this.say(seat, fillTemplate(pick(pool), { topic: this.topicShort() }), { kind: "closing" });
+        const line = await (closings.get(seat) ?? Promise.resolve(fillTemplate(pick(PERSONA_BY_ID[seat].lines[this.lang].closing), { topic: this.topicShort() })));
+        await this.say(seat, line, { kind: "closing" });
       }
     }
     if (this.isEnded()) return;
@@ -1135,6 +1217,7 @@ export class RoomEngine {
       discEnd: this.discEnd,
       endedAt: Date.now(),
       detectedLang: this.lang,
+      body: this.bodyProvider?.(),
     });
     this.emit();
   }

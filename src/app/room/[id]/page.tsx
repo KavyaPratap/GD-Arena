@@ -3,7 +3,8 @@
 import { Suspense, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import { Seat, TimerArc, AiBadge, hueOf, layoutSeats, nameOf } from "@/components/table";
+import { Seat, TimerArc, AiBadge, hueOf, layoutSeats, nameOf, useIsNarrow } from "@/components/table";
+import { SelfView, useBodyTracker } from "@/components/camera";
 import { fmtClock } from "@/lib/lang";
 import { loadConfig } from "@/lib/storage";
 import { useRoom } from "@/lib/useRoom";
@@ -23,7 +24,15 @@ function RoomPageInner() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
   const [cfg, setCfg] = useState<RoomConfig | null | undefined>(undefined);
-  useEffect(() => setCfg(loadConfig(id)), [id]);
+  useEffect(() => {
+    let active = true;
+    Promise.resolve().then(() => {
+      if (active) setCfg(loadConfig(id));
+    });
+    return () => {
+      active = false;
+    };
+  }, [id]);
 
   if (cfg === undefined) return <div className="empty">Loading room…</div>;
   if (cfg === null)
@@ -50,7 +59,9 @@ export default function RoomPage() {
 function Room({ cfg, onEnded }: { cfg: RoomConfig; onEnded: () => void }) {
   const { snap, engine } = useRoom(cfg);
   const [typed, setTyped] = useState("");
-  const [drawer, setDrawer] = useState(true);
+  const narrow = useIsNarrow();
+  const [drawerUser, setDrawerUser] = useState<boolean | null>(null);
+  const drawer = drawerUser !== null ? drawerUser : !narrow;
   const [tab, setTab] = useState<"transcript" | "notes">("transcript");
   const [notes, setNotes] = useState("");
   const [capSize, setCapSize] = useState<"small" | "normal" | "large">("normal");
@@ -58,7 +69,9 @@ function Room({ cfg, onEnded }: { cfg: RoomConfig; onEnded: () => void }) {
   const [patience, setPatience] = useState(cfg.patienceMs);
   const txRef = useRef<HTMLDivElement>(null);
 
-  const seats = useMemo(() => layoutSeats(cfg.panel.length), [cfg.panel.length]);
+  const { tracker, live: vision } = useBodyTracker(!!cfg.camera);
+  const elapsedRef = useRef(0);
+  const seats = useMemo(() => layoutSeats(cfg.panel.length, narrow), [cfg.panel.length, narrow]);
 
   useEffect(() => {
     if (snap?.phase === "ended") {
@@ -70,6 +83,20 @@ function Room({ cfg, onEnded }: { cfg: RoomConfig; onEnded: () => void }) {
   useEffect(() => {
     txRef.current?.scrollTo({ top: txRef.current.scrollHeight, behavior: "smooth" });
   }, [snap?.turns.length, tab]);
+
+  // Body-language tracking: only the live discussion + closing round count toward the report.
+  const phaseNow = snap?.phase;
+  const elapsedNow = snap?.elapsed ?? 0;
+  const ready = !!snap;
+  useEffect(() => {
+    elapsedRef.current = elapsedNow;
+  }, [elapsedNow]);
+  useEffect(() => {
+    if (ready) engine.current?.setBodyProvider(() => tracker.current?.summary());
+  }, [ready, engine, tracker]);
+  useEffect(() => {
+    tracker.current?.setActive(phaseNow === "discussion" || phaseNow === "closing", () => elapsedRef.current);
+  }, [phaseNow, tracker]);
 
   if (!snap) return <div className="empty">Preparing the room…</div>;
 
@@ -160,7 +187,7 @@ function Room({ cfg, onEnded }: { cfg: RoomConfig; onEnded: () => void }) {
             <i />
             {health.net === "offline" ? "Offline" : micBad ? "Typing mode" : "Live"}
           </span>
-          <button className="btn btn-sm btn-ghost" onClick={() => setDrawer((d) => !d)} id="toggle-drawer">
+          <button className="btn btn-sm btn-ghost" onClick={() => setDrawerUser((d) => (d !== null ? !d : narrow))} id="toggle-drawer">
             {drawer ? "Hide" : "Show"} panel
           </button>
           <button className="btn btn-sm btn-danger" id="end-session" onClick={() => e?.endNow()}>
@@ -183,7 +210,7 @@ function Room({ cfg, onEnded }: { cfg: RoomConfig; onEnded: () => void }) {
             </div>
           ) : health.stt === "unsupported" && phase !== "lobby" ? (
             <div className="banner info" role="status">
-              Live captions of your voice need Chrome or Edge. You can still talk, and you can type your replies below.
+              Browser speech recognition is unavailable here (needs Chrome/Edge on HTTPS/localhost). Use the reply box below to send your points so the panel debates you directly!
             </div>
           ) : health.tts === "unsupported" ? (
             <div className="banner info" role="status">
@@ -196,6 +223,8 @@ function Room({ cfg, onEnded }: { cfg: RoomConfig; onEnded: () => void }) {
               {snap.nudge.text}
             </div>
           ) : null}
+
+          {cfg.camera && phase !== "lobby" ? <SelfView tracker={tracker} live={vision} /> : null}
 
           <div className="table-area">
             <div className="table-wrap">
@@ -383,6 +412,14 @@ function Room({ cfg, onEnded }: { cfg: RoomConfig; onEnded: () => void }) {
                     ? "No microphone found. You can still play in typing mode."
                     : "Waiting for microphone permission…"}
             </p>
+            {cfg.camera ? (
+              <div className="lobby-cam">
+                <SelfView tracker={tracker} live={vision} large />
+                <p style={{ fontSize: 13, color: "var(--faint)", marginTop: 8 }}>
+                  Body-language coach is on. Sit so your head and shoulders fit the frame with your face well lit. It calibrates to how you sit now. Analysis runs on your device; nothing is uploaded.
+                </p>
+              </div>
+            ) : null}
             <ul className="lobby-list">
               <li>
                 <b className="ok">◆</b>
