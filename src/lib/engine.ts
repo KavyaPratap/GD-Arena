@@ -271,7 +271,7 @@ export class RoomEngine {
   submitText(text: string) {
     const clean = text.trim();
     if (!clean) return;
-    const inDiscussion = this.phase === "discussion" && !this.busy;
+    const inDiscussion = this.phase === "discussion";
     const inClosing = this.phase === "closing" && this.studentClosingActive;
     if (!inDiscussion && !inClosing) return;
     if (this.current) this.bargeIn();
@@ -645,6 +645,7 @@ export class RoomEngine {
     opts: { kind?: TurnKind; whisper?: string } = {},
   ): Promise<void> {
     return new Promise((resolve) => {
+      this.busy = true;
       const start = this.nowSec();
       const turn: Turn = {
         id: ++this.turnSeq,
@@ -671,6 +672,7 @@ export class RoomEngine {
       cur.finish = (cancelled: boolean) => {
         if (cur.done) return;
         cur.done = true;
+        this.busy = false;
         if (this.currentAudio) {
           try {
             this.currentAudio.pause();
@@ -825,12 +827,17 @@ export class RoomEngine {
   }
 
   private chooseSpeaker(exclude?: SpeakerId): PersonaId | null {
-    const cands = this.cfg.panel.filter((id) => id !== exclude);
+    const last = this.turns[this.turns.length - 1];
+    const prevSpeakers = this.turns.slice(-3).map((t) => t.speaker);
+    const cands = this.cfg.panel.filter((id) => id !== exclude && id !== last?.speaker);
     if (!cands.length) return null;
     let best: PersonaId = cands[0];
-    let bestScore = -1;
+    let bestScore = -1e9;
     for (const id of cands) {
-      const s = (this.bids[id] ?? 0.3) + Math.random() * 0.18;
+      let s = (this.bids[id] ?? 0.3) + Math.random() * 0.25;
+      // Recency penalty so Vikram or any single persona doesn't dominate every round
+      if (prevSpeakers.includes(id)) s -= 0.45;
+      if (id === "vikram" && prevSpeakers.filter((sp) => sp === "vikram").length >= 1) s -= 0.6;
       if (s > bestScore) {
         bestScore = s;
         best = id;
@@ -864,7 +871,8 @@ export class RoomEngine {
       source = pool.drift;
       whisperOut.text = WHISPERS.drift;
       whisperOut.drift = true;
-    } else if (lastStudent && Math.random() < 0.85) {
+    } else if (lastStudent) {
+      // Human student just spoke: always address their specific quote
       source = pool.toStudent;
     } else if (lastAI && Math.random() < 0.65) {
       source = pool.toAI;
@@ -882,60 +890,72 @@ export class RoomEngine {
   }
 
   private async aiTurn(kindOverride?: TurnKind) {
-    const last = this.turns[this.turns.length - 1];
-    // After a tangent, the moderator steps in 60% of the time.
-    if (this.pendingRedirect) {
-      this.pendingRedirect = false;
-      this.busy = true;
-      await this.say("moderator", MOD_LINES[this.lang].redirect(this.topicShort()), { kind: "redirect" });
-      this.busy = false;
-      this.chain = 0;
-      return;
-    }
-    const id = this.chooseSpeaker(last?.speaker);
-    if (!id) return;
-    const w: { text?: string; drift?: boolean } = {};
-    let line = this.buildLine(id, w);
-
-    if (this.health.net === "online" && typeof window !== "undefined") {
-      try {
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 2000);
-        const res = await fetch("/api/turn", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            topic: this.cfg.topic,
-            panel: this.cfg.panel,
-            turns: this.turns.slice(-6),
-            speaker: id,
-            lang: this.lang,
-          }),
-          signal: controller.signal,
-        });
-        clearTimeout(timeout);
-        if (res.ok) {
-          const data = await res.json();
-          if (data?.text) {
-            line = data.text;
-          }
-        }
-      } catch {
-        /* fallback to prebuilt line */
+    if (this.busy || this.current || this.utterOpen) return;
+    this.busy = true;
+    try {
+      const last = this.turns[this.turns.length - 1];
+      // After a tangent, the moderator steps in 60% of the time.
+      if (this.pendingRedirect) {
+        this.pendingRedirect = false;
+        await this.say("moderator", MOD_LINES[this.lang].redirect(this.topicShort()), { kind: "redirect" });
+        this.chain = 0;
+        return;
       }
-    }
+      const id = this.chooseSpeaker(last?.speaker);
+      if (!id) return;
+      const w: { text?: string; drift?: boolean } = {};
+      let line = this.buildLine(id, w);
 
-    this.pendingRedirect = !!w.drift && Math.random() < 0.6;
-    this.chain++;
-    await this.say(id, line, { kind: kindOverride ?? "normal", whisper: this.phase === "watch" ? w.text : undefined });
+      if (this.health.net === "online" && typeof window !== "undefined") {
+        try {
+          const controller = new AbortController();
+          const timeout = setTimeout(() => controller.abort(), 6500);
+          const res = await fetch("/api/turn", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              topic: this.cfg.topic,
+              panel: this.cfg.panel,
+              turns: this.turns.slice(-6),
+              speaker: id,
+              lang: this.lang,
+            }),
+            signal: controller.signal,
+          });
+          clearTimeout(timeout);
+          if (res.ok) {
+            const data = await res.json();
+            if (data?.text) {
+              line = data.text;
+            }
+          }
+        } catch {
+          /* fallback to prebuilt line */
+        }
+      }
+
+      this.pendingRedirect = !!w.drift && Math.random() < 0.6;
+      this.chain++;
+      await this.say(id, line, { kind: kindOverride ?? "normal", whisper: this.phase === "watch" ? w.text : undefined });
+    } finally {
+      this.busy = false;
+      this.lastAnyEnd = performance.now();
+    }
   }
 
   private maybeInterrupt() {
-    if (this.cfg.interruption === "calm" || this.current || !this.utterOpen || this.interruptedThisUtter) return;
-    const threshold = this.cfg.interruption === "brutal" ? 28 : 50;
-    if (this.nowSec() - this.utterStartSec < threshold) return;
-    const cand = this.cfg.panel.filter((id) => PERSONA_BY_ID[id].traits.interrupts >= 0.6)[0];
-    if (!cand) return;
+    if (this.cfg.interruption === "calm" || this.current || this.busy || !this.utterOpen || this.interruptedThisUtter) return;
+    // Don't interrupt if student is typing or hasn't spoken long enough
+    if (!this.voiceActive) return;
+    const monologueSeconds = this.nowSec() - this.utterStartSec;
+    const threshold = this.cfg.interruption === "brutal" ? 25 : 45;
+    if (monologueSeconds < threshold) return;
+
+    // Pick an interrupter fairly, not always Vikram!
+    const candidates = this.cfg.panel.filter((id) => PERSONA_BY_ID[id].traits.interrupts >= 0.6);
+    if (!candidates.length) return;
+    const cand = candidates[Math.floor(Math.random() * candidates.length)];
+
     this.interruptedThisUtter = true;
     this.suppressBargeUntil = performance.now() + 2800;
     const pool = PERSONA_BY_ID[cand].lines[this.lang];
@@ -945,7 +965,10 @@ export class RoomEngine {
     const start = this.nowSec();
     const ev: InterruptionEvent = { at: start, type: "ai_interrupts_student", persona: cand, turnId: this.turnSeq + 1 };
     this.events.push(ev);
-    void this.say(cand, line, { kind: "normal" });
+    this.busy = true;
+    void this.say(cand, line, { kind: "normal" }).finally(() => {
+      this.busy = false;
+    });
     setTimeout(() => {
       ev.outcome = this.voiceActive ? "held" : "yielded";
     }, 3000);
@@ -970,8 +993,10 @@ export class RoomEngine {
     }
 
     const afterStudent = last?.speaker === "student";
-    const mult = this.chain >= 2 ? 2.6 : 1;
-    const needed = afterStudent ? 450 + this.gapJitter : this.cfg.patienceMs * mult * 1.4 + this.gapJitter;
+    // Give the human space: after student finishes, let floor pause at least 2.5s before AI speaks
+    const mult = this.chain >= 2 ? 2.5 : 1.2;
+    const studentGrace = Math.max(2400, this.cfg.patienceMs * 1.5);
+    const needed = afterStudent ? studentGrace + this.gapJitter : this.cfg.patienceMs * mult + this.gapJitter;
     if (gap < needed) return;
     void this.aiTurn();
   }

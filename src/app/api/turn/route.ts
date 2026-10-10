@@ -38,13 +38,18 @@ Ground rules:
 1. Speak in ${isHinglish ? "natural conversational Hinglish (Hindi + English mix, romanized)" : "natural conversational English"}.
 2. Keep your response concise: 1 to 3 punchy sentences (20 to 50 words max).
 3. Do NOT lecture. Respond directly to what someone just said, agree/disagree/probe/build, or advance your private agenda.
-4. If someone made an unsupported claim, challenge it. If you have data, cite a realistic figure.
-5. Sound like an ambitious college student in a real GD, not a polite AI assistant.`;
+4. CRITICAL: If the last speaker was the "Human Student", you MUST respond directly to them! Mention their specific point or quote them, challenge their claim, or build on their argument. Do not ignore the student.
+5. If someone made an unsupported claim, challenge it. If you have data, cite a realistic figure.
+6. Sound like an ambitious college student in a real GD, not a polite AI assistant.`;
+
+    const lastWasHuman = recentTurns[recentTurns.length - 1]?.startsWith("Human Student");
 
     const userPrompt = `Topic: "${topic}"
 
 Recent discussion so far:
 ${recentTurns.length ? recentTurns.join("\n") : "(The floor just opened)"}
+
+${lastWasHuman ? "IMPORTANT: The Human Student just spoke! Address their specific point directly." : "Engage naturally with the latest points made in the room."}
 
 Now it is your turn to speak as ${persona.name}. Deliver your line:`;
 
