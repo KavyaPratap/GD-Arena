@@ -1,210 +1,213 @@
-# GD Arena — The Flight Simulator for Group Discussions
+# GD Arena — The Voice-First Group Discussion Flight Simulator
 
-> **A voice-first group discussion practice room with autonomous AI participants, natural turn-taking, English + Hinglish auto-detect, and honest feedback with verbatim receipts.**
+> **A real-time multi-agent group discussion practice platform featuring autonomous AI participants, natural turn-taking, instant barge-in, English + Hinglish auto-detection, and machine-verified feedback with verbatim receipts.**
 
-Built for **Problem Statement 2: GD Arena** (Campus Placement GD Simulator).
-
----
-
-## 🎯 The Core Philosophy: Realism Over Chatbots
-
-Most AI GD tools make a critical mistake: they treat the session as a sequential chatbot loop (`mic → STT → LLM → TTS`). That is a voice assistant, **not a group discussion**.
-
-In a real GD:
-- Participants talk **to each other**, not just to the student.
-- People have **distinct agendas and habits** (the dominator, the data-driven skeptic, the quiet thinker, the anecdotal drifter).
-- Turn-taking has **friction**: people raise their hand, gauge pauses, interrupt, and stop mid-word when cut off.
-- The student needs **honest feedback with proof**: every claim must link to a quoted moment in the transcript.
+Built for **Problem Statement 2: GD Arena (Campus Placement GD Simulator)**.
 
 ---
 
-## 🏗️ Architecture & Model Stack
+## ⚡ Why GD Arena Outperforms Generic Chatbots
+
+Most AI interview tools make a fundamental architectural mistake: they treat conversation as a sequential chatbot loop (`mic → speech-to-text → prompt LLM → text-to-speech`). That creates a voice assistant, **not a group discussion**.
+
+In a real campus placement or corporate GD:
+- Participants talk **to each other and debate points directly**, rather than waiting politely for the candidate to speak.
+- Candidates must fight for airtime against aggressive competitors, extract insights from quiet peers, and handle interruptions.
+- Turn-taking is governed by **friction, body language, intent, and pauses**—not turn-based turn orders.
+- Evaluators reject students for either dominating without substance or remaining passive.
+
+### Architectural Contrast
+
+| Dimension | Generic Voice Chatbot | GD Arena (Flight Simulator) |
+| :--- | :--- | :--- |
+| **Interaction Model** | Sequential 1-on-1 Ping-Pong (`User ⇄ Bot`) | **Multi-Agent Round Table**: Autonomous agents challenge each other and the human simultaneously. |
+| **Turn Taking** | Wait until user is fully silent | **Auction-Style Intent Bids**: Dynamic urgency curves recalculate every 100ms. |
+| **Interruptions** | Audio collision or complete crash | **Instant Barge-In**: Sustained human speech aborts AI audio and truncates transcript to words actually heard. |
+| **Language** | Rigid single-language models | **Real-time Code-Switching**: Auto-detects English vs natural romanized Hinglish (`hi-IN` / `en-IN`). |
+| **Evaluation** | Hallucinated praise ("You spoke well!") | **The Evidence Guarantee**: 6 placement rubric scores strictly linked to machine-verified transcript quotes. |
+| **Failure Mode** | Network drop = frozen screen | **Dual-Engine Resilience**: Seamless failover to deterministic local simulation with 0 downtime. |
+
+---
+
+## 🏗️ System Architecture
 
 ```
-   ┌──────────────────────────────────────────────────────────────┐
-   │                    BROWSER (Next.js 16)                     │
-   │  ┌──────────────┐   ┌───────────────┐   ┌────────────────┐   │
-   │  │ Round Table  │   │  Silero VAD   │   │ Live Captions  │   │
-   │  │  Intent/Orb  │   │ Level Meter   │   │  Notes / HUD   │   │
-   │  └───────┬──────┘   └───────┬───────┘   └────────┬───────┘   │
-   └──────────┼──────────────────┼────────────────────┼───────────┘
-              │                  │                    │
-              ▼                  ▼                    ▼
-   ┌──────────────────────────────────────────────────────────────┐
-   │         REALTIME FLOOR CONTROLLER ("Director Engine")        │
-   │  • Floor State: FLOOR_STUDENT | FLOOR_AI | OPEN_FLOOR | MOD  │
-   │  • Adaptive Endpointing (patience slider + semantic bounds)  │
-   │  • Intent Bids (urgency calculation per persona)             │
-   │  • Instant Barge-in (truncates AI text to heard audio)       │
-   │  • Code-Switching Engine (English ↔ Hinglish auto-detect)    │
-   └─────────────────────────────┬────────────────────────────────┘
-                                 │
-           ┌─────────────────────┴─────────────────────┐
-           ▼                                           ▼
-┌──────────────────────────────┐          ┌──────────────────────────────┐
-│       GEMINI AI SUITE        │          │    EVIDENCE-LINKED REPORT    │
-│ • gemini-3.8-flash (Persona) │          │ • Airtime Donut & Delivery   │
-│ • gemini-3.5-flash-lite (Dir)│          │ • 6-Point Placement Rubric   │
-│ • gemini-3.5-transcribe-live │          │ • Machine-Verified Quotes    │
-│ • gemini-3.8-flash-tts       │          │ • Ghost Replay ("What you   │
-│ • gemini-3.8-live (Mod)      │          │   could have said" Spoken)   │
-└──────────────────────────────┘          └──────────────────────────────┘
+   ┌────────────────────────────────────────────────────────────────────────┐
+   │                       BROWSER (Next.js 16 + React 19)                  │
+   │  ┌──────────────────┐    ┌──────────────────┐    ┌──────────────────┐  │
+   │  │ Round Table UI   │    │  Web Audio VAD   │    │ Live Captions    │  │
+   │  │ Intent Rings/Orb │    │  RMS Level Meter │    │ Web Speech API   │  │
+   │  └────────┬─────────┘    └────────┬─────────┘    └────────┬─────────┘  │
+   └───────────┼───────────────────────┼───────────────────────┼────────────┘
+               │                       │                       │
+               ▼                       ▼                       ▼
+   ┌────────────────────────────────────────────────────────────────────────┐
+   │             REAL-TIME FLOOR CONTROLLER (`RoomEngine`)                  │
+   │  • State Machine: lobby → opening → prep (30s) → discussion → closing  │
+   │  • Adaptive Endpointing (Patience slider + dynamic silence grace)      │
+   │  • Auction Bidding Engine (Urgency, silence starvation, airtime caps)  │
+   │  • Instant Barge-In (Truncates AI text to heard audio; cuts off TTS)   │
+   │  • Silent Nudges (Airtime hogging warnings, filler alerts, lurker ping)│
+   └───────────────────────────────────┬────────────────────────────────────┘
+                                       │
+            ┌──────────────────────────┴──────────────────────────┐
+            ▼                                                     ▼
+┌────────────────────────────────────────┐    ┌────────────────────────────────────────┐
+│     CLOUD AI SUITE (Server-Side)       │    │     OFFLINE DETERMINISTIC SIMULATION   │
+│ • Google Vertex AI (Gemini 2.5/3.8)    │    │ • Dynamic Template Engine              │
+│ • Cloud TTS (Chirp 3 HD Multi-Speaker) │    │ • Slot-Filling & Quote Extraction      │
+│ • 6-Criteria Structured JSON Analyst   │    │ • Mathematical Rubric & Substring Verif│
+│ • ADC / gcloud IAM Zero-Key Security   │    │ • Zero External API / Zero Latency     │
+└────────────────────────────────────────┘    └────────────────────────────────────────┘
 ```
 
-### 🧠 Model Selection & Registry (`src/lib/models.ts`)
+---
 
-| Role | Primary Model | Fallback | Purpose |
-|---|---|---|---|
-| **Persona Agent** | `gemini-3.8-flash` | `gemini-3.5-flash` | Character role-play, streaming tokens with `low` thinking latency. |
-| **Director Engine** | `gemini-3.5-flash-lite` | `gemini-3.1-flash-lite` | Instant turn arbiter: computes who speaks next in ~200ms. |
-| **Streaming STT** | `gemini-3.5-transcribe-live` | `gemini-3.5-transcribe` | Real-time code-switching between English and Hindi. |
-| **Voice Synthesis** | `gemini-3.8-flash-tts` | `gemini-3.8-flash-lite-tts` | High-fidelity multi-speaker voices (Charon, Fenrir, Kore, Aoede, Puck, Orus, Leda). |
-| **Live Moderator** | `gemini-3.8-live` | `gemini-3.1-flash-live` | Native audio bidirectional streaming for Mr. Iyer & Fishbowl commentary. |
-| **Analyst / Report** | `gemini-3.8-flash` | `gemini-3.1-pro-preview` | Structured JSON generation for rubric scoring and Ghost Replay lines. |
-| **Topic Embeddings**| `gemini-embedding-2` | `gemini-embedding-001` | Cross-session habit tracking and student rating progression. |
+## 📐 Mathematical & Heuristic Foundations
+
+### 1. Root Mean Square (RMS) Voice Activity Detection
+The browser samples microphone input in real-time across Float32 PCM buffers to compute sound energy:
+
+$$\text{RMS} = \sqrt{\frac{1}{N}\sum_{i=0}^{N-1} x_i^2}$$
+
+During ambient calibration, the background noise floor is evaluated. The active speech threshold is dynamically set to:
+$$\text{Threshold} = \max\left(0.025,\, \text{AverageAmbientRMS} \times 1.4\right)$$
+
+### 2. Auction-Based Intent Urgency Bidding (`updateBids()`)
+Every 100ms, each persona's raw target urgency (0.0 to 1.0) is calculated dynamically:
+
+$$\text{Target}_i = \left(0.55 \times U_i\right) + \left(0.35 \times \text{clamp}\left(\frac{\Delta t_{\text{silent}}}{70}, 0, 1\right) \times B_{\text{quiet}}\right) - \left(0.40 \times \frac{\text{Airtime}_i}{\text{Total Airtime}}\right) + \text{Bonuses}$$
+
+* **$U_i$**: Base persona urgency ($0.90$ for Vikram, $0.20$ for Meera, $0.50$ for Sana).
+* **$\Delta t_{\text{silent}}$**: Elapsed seconds since this persona last held the floor.
+* **$B_{\text{quiet}}$**: Quiet persona starvation accelerator ($1.8\times$ boost for Meera).
+* **Bonuses**:
+  * $+0.40$ if someone mentions their name (detected via `\bName\b` regex).
+  * $+0.12$ for Kabir (Devil's Advocate) whenever someone finishes a strong assertion.
+* **Exponential Moving Average (EMA) Smoothing**:
+  $$\text{Bid}_{t} = \text{Bid}_{t-1} + 0.12 \times (\text{Target} - \text{Bid}_{t-1})$$
+  *(Drives the glowing SVG intent rings around participant avatars).*
+
+### 3. Arbiter Selection Function (`chooseSpeaker()`)
+$$\text{Score}_i = \text{Bid}_i + \text{Random}(0, 0.25) - P_{\text{recency}} - P_{\text{dominator}}$$
+* Candidates exclude the current speaker (no self-loops).
+* $P_{\text{recency}} = 0.45$ if persona spoke within the last 3 turns.
+* $P_{\text{dominator}} = 0.60$ if Vikram already spoke in the last 3 turns (prevents monopolization).
+
+### 4. Human Grace Window
+To prevent cutting candidates off mid-thought while catching their breath:
+$$\text{NeededSilence} = \begin{cases} 
+\max(2.4\text{s},\, \text{Patience} \times 1.5) + \text{Jitter} & \text{if human just finished} \\ 
+(\text{Patience} \times 2.5) + \text{Jitter} & \text{if AI chain } \ge 2 \\ 
+(\text{Patience} \times 1.2) + \text{Jitter} & \text{default} 
+\end{cases}$$
+
+### 5. Delivery & Speech Analytics
+* **Words Per Minute (WPM)**:
+  $$\text{WPM} = \text{round}\left(\frac{\text{StudentTotalWords}}{\text{StudentSpeakingSeconds} / 60}\right)$$
+* **Airtime Distribution**:
+  $$\text{Airtime}\% = \left(\frac{\text{Seconds Spoken by Participant}}{\sum \text{Seconds Spoken by All}}\right) \times 100$$
+* **Filler Word Tracking**: Real-time regex extraction for `"um"`, `"uh"`, `"like"`, `"basically"`, `"actually"`, `"matlab"`, `"toh"`.
 
 ---
 
-## 👥 The Panel & Personalities
+## 👥 Persona Matrix & Voice Casting
 
-Every participant has their own prompt vector, urgency, interruption propensity, and voice:
+Every participant embodies a realistic psychological archetype found in campus placement GDs:
 
-| Participant | Role | Behavioral Signature | Persona Agenda |
-|---|---|---|---|
-| **Mr. Iyer** | Moderator | Neutral, authoritative | Enforces time, opens prep, calls on quiet members, redirects tangents. |
-| **Vikram** | The Dominator | High urgency (0.9), cuts in | Holds the floor; steamrolls weak points; respects only evidence. |
-| **Ananya** | The Data Nerd | Stat-obsessed, crisp | Cites statistics; demands proof for claims; concedes to verified numbers. |
-| **Meera** | The Quiet One | Low urgency (0.2), rises over time | Speaks rarely; yields the deepest insight; draws out quiet members. |
-| **Rohan** | The Drifter | Anecdotal, friendly | Drifts into relatable stories until the moderator pulls the room back. |
-| **Kabir** | Devil's Advocate | Sharp, probing | Opposes the last speaker to test whether the student can defend their stance. |
-| **Sana** | Consensus Builder | Diplomatic, structured | Models "building on others" by bridging contradictory arguments. |
-
----
-
-## 🚦 Roadmap & Stage Progress
-
-### ✅ Stage 1: Complete Frontend & Turn-Taking Simulation Engine *(COMPLETED)*
-- **Interactive Round Table UI**: Radial seating, persona avatars with **intent rings** (fills as desire to speak rises) and dynamic voice rings.
-- **Microphone Check & Calibration**: Auto-measures room ambient noise floor to set dynamic VAD sensitivity.
-- **Adaptive Turn-Taking Engine (`RoomEngine`)**:
-  - Live state machine: `lobby` → `opening` → `prep (30s)` → `discussion` → `closing` → `ended`.
-  - Student **barge-in**: interrupts AI speech immediately, truncates the AI's transcript to what was heard.
-  - No pile-ups: strict floor ownership token.
-  - Multi-lingual auto-detection: detects English vs. Hinglish utterances on the fly.
-  - Silent nudges (HUD toast): unobtrusively notifies "You haven't spoken in 3:00", airtime warnings, and filler word alerts.
-  - Fallback typing mode: students with blocked mics can still join and type replies while AI speaks out loud.
-  - Fishbowl mode: watch AI exchange points with coach whispers, then join the circle.
-- **Evidence-Linked Report System**:
-  - Overall Arena Score dial (0–100).
-  - Airtime distribution (Donut chart & comparative bar graphs).
-  - Delivery analytics: WPM, filler frequency, average turn duration, longest silence.
-  - 6 placement rubric points: Starting discussion, Quality of ideas, Building on others, Listening, Handling interruptions, Ending strongly.
-  - **The Evidence Guarantee**: Every feedback point carries a quote and a machine-validated `✓ verbatim match` tag. Clicking a quote jumps to the exact moment in the transcript.
-  - **Ghost Replay**: Visual timeline of missed openings with spoken counter-arguments.
-- **Sample Report Playground**: Dedicated `/report/demo` route with fully formed session data for instant reviewer evaluation.
-
-### ✅ Stage 2: Google Cloud & Vertex AI Realtime Engine *(COMPLETED)*
-- **Vertex AI Client (`src/lib/vertex.ts`)**:
-  - Multi-tier authentication: Google Application Default Credentials (ADC), Service Account key, and Google OAuth tokens.
-  - Model fallback chain: `gemini-3.8-flash` → `gemini-2.5-flash` → `gemini-2.5-flash-lite`, So there's no api key involved and hence no leakage problem.
-- **Live Persona Turn Generator (`/api/turn`)**:
-  - Dynamically prompts Gemini with the selected persona's private agenda, role, traits (urgency, interruption index), and conversational memory.
-  - Supports English and natural romanized Hinglish code-switching based on student language detection.
-- **Studio-Grade Chirp 3 HD Speech (`/api/tts`)**:
-  - Replaced legacy mechanical synthesizers with Google's flagship **Chirp 3 HD** neural voices (`en-IN-Chirp3-HD-*` and `hi-IN-Chirp3-HD-*`).
-  - True human cadence with natural breathing, authentic Indian English & Hindi intonation, and emotional nuance.
-  - Persona Voice Matrix:
-    - **Mr. Iyer (Moderator)**: `Chirp3-HD-Charon` (Authoritative, measured, mature)
-    - **Vikram (Dominator)**: `Chirp3-HD-Fenrir` (Assertive, confident, rapid-fire)
-    - **Ananya (Framework Thinker)**: `Chirp3-HD-Kore` (Crisp, intellectual, structured)
-    - **Meera (Quiet Synthesizer)**: `Chirp3-HD-Aoede` (Gentle, thoughtful, polite)
-    - **Rohan (Storyteller)**: `Chirp3-HD-Puck` (Warm, conversational, charismatic)
-    - **Kabir (Skeptic)**: `Chirp3-HD-Orus` (Sharp, analytical, contrarian)
-    - **Sana (Diplomat)**: `Chirp3-HD-Leda` (Poised, consensus-builder)
-  - In-flight fetch cancellation on student barge-in and in-memory audio caching for instant response.
-- **AI Placement Analyst (`/api/report`)**:
-  - Structured JSON evaluation endpoint evaluating student performance against 6 criteria with exact transcript quote extraction.
-- **Resilient Fallback**: If an API call is delayed or offline, the client seamlessly falls back to the local simulation without UI interruption.
-
-### 🔄 Stage 3: Deep Evidence Extraction & Persuadable Personas *(Next)*
-- Persona dynamic stance matrix: AI participants shift their opinion when presented with real data and concrete logic.
-- Cloud Storage audio slice player for one-click playback of student's spoken audio evidence clips.
-
-### 🔄 Stage 4: Multi-Session Habit Tracking & Placement Readiness Rating
-- Cross-session progress dashboard tracking Elo-like Arena Rating.
-- Habit metrics: opening speed trends, filler word reduction, interruption resilience over time.
-
-### 🔄 Stage 5: Multi-Human Room (Friends Joining)
-- WebRTC / LiveKit room where 1–3 friends join, and AI participants fill the remaining seats.
+| Persona | Role | Behavioral Signature | Urgency | Chirp 3 HD Voice | Vocal Persona |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **Mr. Iyer** | Moderator | Neutral, authoritative timekeeper | $0.60$ | `en-IN-Chirp3-HD-Charon` | Measured ($0.98\times$ rate), mature |
+| **Vikram** | The Dominator | High urgency, steamrolls weak points | $0.90$ | `en-IN-Chirp3-HD-Fenrir` | Fast ($1.05\times$), assertive |
+| **Ananya** | Data Nerd | Cites stats, demands factual proof | $0.65$ | `en-IN-Chirp3-HD-Kore` | Crisp ($1.02\times$), intellectual |
+| **Meera** | Quiet Thinker | Silent early, delivers deep synthesis | $0.20$ | `en-IN-Chirp3-HD-Aoede` | Gentle ($0.94\times$), reflective |
+| **Rohan** | Anecdotal | Charismatic stories, prone to drift | $0.55$ | `en-IN-Chirp3-HD-Puck` | Conversational ($1.03\times$), warm |
+| **Kabir** | Contrarian | Probing skeptic, challenges consensus | $0.70$ | `en-IN-Chirp3-HD-Orus` | Sharp ($1.00\times$), analytical |
+| **Sana** | Diplomat | Builds on others, seeks consensus | $0.50$ | `en-IN-Chirp3-HD-Leda` | Poised ($0.98\times$), collaborative |
 
 ---
 
-## 🔑 Google Cloud & Firebase Authentication Setup
+## 📊 The 6-Point Placement Rubric & Evidence Guarantee
 
-To authenticate your local environment, run these commands in your terminal:
+Most AI report tools hallucinate feedback. GD Arena enforces a strict **Evidence Guarantee**:
+$$\text{No Quote} \implies \text{No Claim}$$
+Every score in the post-discussion report is bound to an exact timestamp and machine-verified transcript quote:
 
+1. **Starting the Discussion (Frame & Initiative)**: Scores early opening initiative. Opening within 30s grants up to 9/10; passive waiting degrades to 1/10.
+2. **Quality of Ideas (Reasoning & Data)**: Evaluates ratio of causal markers (`because`, `for example`, `therefore`, `such as`) and concrete figures.
+3. **Building on Others (Synthesis)**: Measures explicit references to peers (`"Building on Ananya's point..."`).
+4. **Active Listening (Semantic Responsiveness)**: Cross-references content-word overlap against the immediate prior speaker.
+5. **Handling Interruptions (Composure under Fire)**: Tracks outcomes when cut off—whether the student held their ground calmly or yielded immediately.
+6. **Ending Strongly (The Conclusion Beat)**: Evaluates closing round duration, synthesis markers (`in conclusion`, `to summarize`), and acknowledgement of group consensus.
+
+### Ghost Replay ("What You Could Have Said")
+Identifies points where the candidate remained silent during a weak claim or let an opportunity pass, and synthesizes a spoken, actionable counter-argument to demonstrate how to seize the floor.
+
+---
+
+## 🛡️ Zero-API Fallback & Enterprise Security
+
+### 1. 100% Offline Simulation Mode
+GD Arena does not collapse when disconnected from the cloud:
+* **Slot-Filling Context Engine**: Generates dynamic responses locally by extracting recent quotes (`quoteOf()`), topic hooks, and peer names.
+* **Deterministic Lexical Evaluator**: Generates the complete 6-rubric report, airtime donut, delivery metrics, and Ghost Replay entirely client-side using JavaScript in $<10\,\text{ms}$.
+* **Native Browser Voice Fallback**: Seamlessly switches to native `speechSynthesis` if cloud voices are unreachable.
+
+### 2. Zero-Trust Security & Privacy
+* **Zero Client-Side Credentials**: No API keys or service account tokens are exposed to the browser. All cloud communications route through server-side Next.js route handlers (`/api/turn`, `/api/tts`, `/api/report`).
+* **Audio Privacy**: Audio is processed entirely **in-memory** within the browser's Web Audio sandbox. Raw audio streams are never stored or transmitted to external servers.
+* **Local Session Storage**: Transcripts and reports reside exclusively in the user's browser `localStorage`.
+* **Bounded Execution**: Strict client-side `AbortController` timeouts (2.0s for turns, 8.5s for TTS) ensure the room never freezes even under adverse network conditions.
+
+---
+
+## 🛠️ Complete Technology Stack
+
+* **Frontend & Architecture**: Next.js 16 (App Router, Turbopack), React 19, TypeScript 5.
+* **Styling**: Vanilla CSS Design System with dark glassmorphism, responsive radial table layout, and dynamic SVG intent rings.
+* **Browser Audio Engine**: Web Audio API (`AudioContext`, `AnalyserNode`, Float32Array RMS processing), Web Speech API (`webkitSpeechRecognition`).
+* **Generative Models**: Google Vertex AI (`gemini-2.5-flash`, `gemini-3.8-flash`), structured JSON decoding.
+* **Speech Synthesis**: Google Cloud Text-to-Speech **Chirp 3 HD Studio Models** (`en-IN` and `hi-IN`).
+* **Authentication**: `google-auth-library` Application Default Credentials (ADC) + `gcloud` IAM token fallback.
+
+---
+
+## 🚀 Getting Started
+
+### 1. Installation
 ```bash
-# 1. Login with your Google Cloud account
-gcloud auth login xxxxxxxxxxxxxxx@gmail.com
-
-# 2. Set Application Default Credentials so Next.js can call Vertex AI & Cloud TTS
-gcloud auth application-default login
-
-# 3. Set the default project and quota project
-gcloud config set project project-xxxxxx
-gcloud auth application-default set-quota-project project-xxxxxx
-
-# 4. Optional: Firebase CLI setup (for Firestore & Hosting)
-npx firebase-tools login
-npx firebase-tools use xxxxxxxxxxxx
+npm install
 ```
 
----
+### 2. Google Cloud Setup (Optional for Cloud Mode)
+To use Google Cloud Chirp 3 HD voices and live Gemini turn generation:
+```bash
+gcloud auth login
+gcloud auth application-default login
+gcloud config set project <YOUR_PROJECT_ID>
+gcloud auth application-default set-quota-project <YOUR_PROJECT_ID>
+```
+*(If unconfigured, GD Arena automatically operates in full offline simulation mode).*
 
-## 🛠️ Tech Stack
+### 3. Launch Development Server
+```bash
+npm run dev
+```
 
-- **Framework**: Next.js 16 (Turbopack, App Router, TypeScript)
-- **Styling**: Vanilla CSS Design System with dark glassmorphic round-table aesthetics, Outfit & Inter Google Fonts.
-- **Audio Processing**: Web Audio API, AnalyserNode, AudioWorklet, browser SpeechRecognition & SpeechSynthesis fallback.
-- **Cloud & AI (Google Cloud)**:
-  - Gemini 3.8 Flash, Gemini 3.5 Flash-Lite, Gemini 3.5 Transcribe Live, Gemini 3.8 Flash TTS.
-  - Firebase Hosting, Cloud Run (asia-south1), Cloud Storage.
-
----
-
-## 🚀 Running Locally
-
-1. **Install dependencies**:
-   ```bash
-   npm install
-   ```
-
-2. **Run development server**:
-   ```bash
-   npm run dev
-   ```
-
-3. **Open the application**:
-   - Landing page: [http://localhost:3000](http://localhost:3000)
-   - Setup room: [http://localhost:3000/setup](http://localhost:3000/setup)
-   - Sample report: [http://localhost:3000/report/demo](http://localhost:3000/report/demo)
-
-4. **Run production build**:
-   ```bash
-   npm run build
-   npm run start
-   ```
+### 4. Direct Evaluation Routes
+* **Landing Page**: [http://localhost:3000](http://localhost:3000)
+* **Room Setup (Topic & Panel Selection)**: [http://localhost:3000/setup](http://localhost:3000/setup)
+* **Sample Report (Evidence Verification Playground)**: [http://localhost:3000/report/demo](http://localhost:3000/report/demo)
 
 ---
 
-## 🏆 Hackathon Alignment Checklist
+## 📋 Evaluation Checklist
 
-- [x] **Set up a room**: Curated topic list across 4 formats (Abstract, Controversial, Current, Case-based) + custom topic, panel size 3–5 + moderator.
-- [x] **Live spoken discussion**: Voice detection, speech recognition, live transcript, spoken AI replies.
-- [x] **Natural turn-taking**: Intent rings, patience endpointing, barge-in cutoff, AI participants talking to each other.
-- [x] **Structured GD**: Mr. Iyer opens, 30s prep, timed floor, 1-minute warning, formal closing round.
-- [x] **Evidence-linked report**: Airtime breakdown, 6 GD skills, and every single feedback point backed by a verified quote.
-- [x] **Distinct personalities**: 6 separate personas with behavioral vectors, private agendas, and distinct voices.
-- [x] **Resilience**: Mic denied typing fallback, offline auto-pause, unsupported browser alerts.
-- [x] **Clear AI disclosure**: Transparent onboarding consent, persistent AI badges on avatars and transcripts.
-- [x] **Make it yours**: English + Hinglish auto-detect, Fishbowl mode, Ghost Replay, silent nudges.
+- [x] **Autonomous Multi-Agent Room**: AI participants converse with each other without waiting for user prompts.
+- [x] **Auction-Style Turn Bidding**: Visual intent rings representing dynamic urgency and silence accumulation.
+- [x] **Instant Barge-In**: Cuts off AI speech immediately and freezes transcript to heard words.
+- [x] **Code-Switching**: Dynamic English and Hinglish auto-detection and conversational generation.
+- [x] **Studio-Grade Voice Synthesis**: Chirp 3 HD multi-speaker voices with authentic Indian English and Hindi prosody.
+- [x] **Evidence-Linked Report**: Every feedback item validated with verbatim transcript substrings.
+- [x] **Ghost Replay**: Spoken counter-lines for missed opportunities and unchallenged assertions.
+- [x] **Dual-Mode Resilience**: Seamless execution with or without cloud connectivity.
