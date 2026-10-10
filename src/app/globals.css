@@ -1901,26 +1901,52 @@ input[type="range"] {
     top: 6px;
     right: 8px;
     left: auto;
-    width: 92px;
+    width: 104px;
+    z-index: 12;
   }
   .selfview .frame {
     border-radius: 10px;
+    box-shadow: 0 4px 16px hsl(0 0% 0% / 0.5);
   }
-  .selfview .privacy,
-  .selfview .sv-chips,
-  .selfview .sv-status {
+  .selfview .privacy {
     display: none;
+  }
+  .selfview .sv-status {
+    font-size: 10px;
+    padding: 2px 4px;
+    background: hsl(250 30% 12% / 0.85);
+    border-radius: 6px;
+    margin-top: 2px;
+  }
+  .selfview .sv-chips {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    margin-top: 3px;
+  }
+  .selfview .svc {
+    font-size: 9.5px;
+    padding: 2px 6px;
+    border-radius: 6px;
+    text-align: center;
+    white-space: nowrap;
   }
   .selfview.large {
     width: min(260px, 100%);
   }
   .selfview.large .privacy,
-  .selfview.large .sv-chips,
   .selfview.large .sv-status {
     display: initial;
   }
   .selfview.large .sv-chips {
     display: flex;
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .selfview.large .svc {
+    font-size: 12px;
+    padding: 3px 8px;
   }
   .lobby-card {
     padding: 22px 18px;

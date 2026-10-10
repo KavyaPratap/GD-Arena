@@ -69,7 +69,8 @@ function Room({ cfg, onEnded }: { cfg: RoomConfig; onEnded: () => void }) {
   const [patience, setPatience] = useState(cfg.patienceMs);
   const txRef = useRef<HTMLDivElement>(null);
 
-  const { tracker, live: vision } = useBodyTracker(!!cfg.camera);
+  const [cameraOn, setCameraOn] = useState(!!cfg.camera);
+  const { tracker, live: vision } = useBodyTracker(cameraOn);
   const elapsedRef = useRef(0);
   const seats = useMemo(() => layoutSeats(cfg.panel.length, narrow), [cfg.panel.length, narrow]);
 
@@ -92,8 +93,8 @@ function Room({ cfg, onEnded }: { cfg: RoomConfig; onEnded: () => void }) {
     elapsedRef.current = elapsedNow;
   }, [elapsedNow]);
   useEffect(() => {
-    if (ready) engine.current?.setBodyProvider(() => tracker.current?.summary());
-  }, [ready, engine, tracker]);
+    if (ready) engine.current?.setBodyProvider(() => (cameraOn ? tracker.current?.summary() : undefined));
+  }, [ready, engine, tracker, cameraOn]);
   useEffect(() => {
     tracker.current?.setActive(phaseNow === "discussion" || phaseNow === "closing", () => elapsedRef.current);
   }, [phaseNow, tracker]);
@@ -187,6 +188,9 @@ function Room({ cfg, onEnded }: { cfg: RoomConfig; onEnded: () => void }) {
             <i />
             {health.net === "offline" ? "Offline" : micBad ? "Typing mode" : "Live"}
           </span>
+          <button className={`btn btn-sm ${cameraOn ? "btn-primary" : "btn-ghost"}`} onClick={() => setCameraOn((c) => !c)} id="toggle-camera-topbar" title="Toggle camera body-language coach">
+            {cameraOn ? "📷 On" : "📷 Cam"}
+          </button>
           <button className="btn btn-sm btn-ghost" onClick={() => setDrawerUser((d) => (d !== null ? !d : narrow))} id="toggle-drawer">
             {drawer ? "Hide" : "Show"} panel
           </button>
@@ -224,7 +228,7 @@ function Room({ cfg, onEnded }: { cfg: RoomConfig; onEnded: () => void }) {
             </div>
           ) : null}
 
-          {cfg.camera && phase !== "lobby" ? <SelfView tracker={tracker} live={vision} /> : null}
+          {cameraOn && phase !== "lobby" ? <SelfView tracker={tracker} live={vision} /> : null}
 
           <div className="table-area">
             <div className="table-wrap">
@@ -365,6 +369,9 @@ function Room({ cfg, onEnded }: { cfg: RoomConfig; onEnded: () => void }) {
         </div>
 
         <div className="row" style={{ gap: 6 }}>
+          <button className={`chip ${cameraOn ? "on" : ""}`} onClick={() => setCameraOn((c) => !c)} id="toggle-camera-controls" title="Toggle camera coach">
+            📷 {cameraOn ? "Camera on" : "Camera off"}
+          </button>
           <button className="chip" onClick={() => setCapSize((s) => (s === "small" ? "normal" : s === "normal" ? "large" : "small"))} aria-label="Change caption size" id="cap-size">
             Aa {capSize}
           </button>
@@ -412,7 +419,17 @@ function Room({ cfg, onEnded }: { cfg: RoomConfig; onEnded: () => void }) {
                     ? "No microphone found. You can still play in typing mode."
                     : "Waiting for microphone permission…"}
             </p>
-            {cfg.camera ? (
+            <div style={{ margin: "14px 0 6px" }}>
+              <button
+                className={`chip ${cameraOn ? "on" : ""}`}
+                onClick={() => setCameraOn((c) => !c)}
+                id="toggle-camera-lobby"
+                title="Toggle body-language coach"
+              >
+                📷 Body-language coach: {cameraOn ? "ON (camera active)" : "OFF (click to enable)"}
+              </button>
+            </div>
+            {cameraOn ? (
               <div className="lobby-cam">
                 <SelfView tracker={tracker} live={vision} large />
                 <p style={{ fontSize: 13, color: "var(--faint)", marginTop: 8 }}>

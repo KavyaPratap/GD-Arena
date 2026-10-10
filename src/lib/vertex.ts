@@ -24,7 +24,13 @@ let tokenInflight: Promise<string> | null = null;
 let projectInflight: Promise<string> | null = null;
 
 export function getProjectId(): Promise<string> {
-  if (process.env.GCP_PROJECT_ID) return Promise.resolve(process.env.GCP_PROJECT_ID);
+  const envId =
+    process.env.GCP_PROJECT_ID ||
+    process.env.GCLOUD_PROJECT ||
+    process.env.GOOGLE_CLOUD_PROJECT ||
+    (process.env.FIREBASE_CONFIG ? (() => { try { return JSON.parse(process.env.FIREBASE_CONFIG).projectId; } catch { return undefined; } })() : undefined);
+  if (envId) return Promise.resolve(envId);
+
   if (!projectInflight) {
     projectInflight = (async () => {
       try {
@@ -39,8 +45,8 @@ export function getProjectId(): Promise<string> {
       } catch {
         /* handled below */
       }
-      projectInflight = null;
-      throw new Error("No GCP project configured. Set GCP_PROJECT_ID in .env.local.");
+      // Default to deployed Firebase project
+      return "gdarena-2251a";
     })();
   }
   return projectInflight;

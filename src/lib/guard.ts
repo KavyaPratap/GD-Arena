@@ -27,8 +27,32 @@ function sameOrigin(req: Request): boolean {
   const origin = req.headers.get("origin");
   if (!origin) return true; // same-origin fetches from some browsers omit it on GET; POST normally sends it
   try {
-    const host = req.headers.get("x-forwarded-host") ?? req.headers.get("host");
-    return !!host && new URL(origin).host === host;
+    const originUrl = new URL(origin);
+    const originHost = originUrl.host;
+    const fwdHost = (req.headers.get("x-forwarded-host") ?? "").split(",")[0].trim();
+    const rawHost = (req.headers.get("host") ?? "").split(",")[0].trim();
+    if (fwdHost && originHost === fwdHost) return true;
+    if (rawHost && originHost === rawHost) return true;
+
+    // Standard browser security header for same-site requests
+    const secFetch = req.headers.get("sec-fetch-site");
+    if (secFetch === "same-origin" || secFetch === "same-site") return true;
+
+    // Permitted hosted domains & local development hosts
+    const h = originUrl.hostname.toLowerCase();
+    if (
+      h.endsWith(".web.app") ||
+      h.endsWith(".firebaseapp.com") ||
+      h.endsWith(".run.app") ||
+      h === "localhost" ||
+      h === "127.0.0.1" ||
+      h.startsWith("192.168.") ||
+      h.startsWith("10.") ||
+      h.startsWith("172.")
+    ) {
+      return true;
+    }
+    return false;
   } catch {
     return false;
   }
