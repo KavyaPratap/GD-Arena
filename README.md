@@ -105,9 +105,8 @@ Every participant has their own prompt vector, urgency, interruption propensity,
 
 ### ✅ Stage 2: Google Cloud & Vertex AI Realtime Engine *(COMPLETED)*
 - **Vertex AI Client (`src/lib/vertex.ts`)**:
-  - Direct integration with Google Cloud project (`project-5d83834f-f05b-4854-823`) utilizing the user's $300 Google Cloud credit.
   - Multi-tier authentication: Google Application Default Credentials (ADC), Service Account key, and Google OAuth tokens.
-  - Model fallback chain: `gemini-3.8-flash` → `gemini-2.5-flash` → `gemini-2.5-flash-lite`.
+  - Model fallback chain: `gemini-3.8-flash` → `gemini-2.5-flash` → `gemini-2.5-flash-lite`, So there's no api key involved and hence no leakage problem.
 - **Live Persona Turn Generator (`/api/turn`)**:
   - Dynamically prompts Gemini with the selected persona's private agenda, role, traits (urgency, interruption index), and conversational memory.
   - Supports English and natural romanized Hinglish code-switching based on student language detection.
@@ -142,24 +141,22 @@ Every participant has their own prompt vector, urgency, interruption propensity,
 
 ## 🔑 Google Cloud & Firebase Authentication Setup
 
-The project is configured for Google Cloud Project: `project-5d83834f-f05b-4854-823` (Account: `pratapkavya708@gmail.com`).
-
-To authenticate your local environment with your $300 credit, run these commands in your terminal:
+To authenticate your local environment, run these commands in your terminal:
 
 ```bash
 # 1. Login with your Google Cloud account
-gcloud auth login pratapkavya708@gmail.com
+gcloud auth login xxxxxxxxxxxxxxx@gmail.com
 
 # 2. Set Application Default Credentials so Next.js can call Vertex AI & Cloud TTS
 gcloud auth application-default login
 
 # 3. Set the default project and quota project
-gcloud config set project project-5d83834f-f05b-4854-823
-gcloud auth application-default set-quota-project project-5d83834f-f05b-4854-823
+gcloud config set project project-xxxxxx
+gcloud auth application-default set-quota-project project-xxxxxx
 
 # 4. Optional: Firebase CLI setup (for Firestore & Hosting)
 npx firebase-tools login
-npx firebase-tools use project-5d83834f-f05b-4854-823
+npx firebase-tools use xxxxxxxxxxxx
 ```
 
 ---
