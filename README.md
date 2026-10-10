@@ -103,12 +103,22 @@ Every participant has their own prompt vector, urgency, interruption propensity,
   - **Ghost Replay**: Visual timeline of missed openings with spoken counter-arguments.
 - **Sample Report Playground**: Dedicated `/report/demo` route with fully formed session data for instant reviewer evaluation.
 
-### 🔄 Stage 2: Google Cloud & Gemini Realtime Streaming Gateway *(Next)*
-- Next.js API Routes / WebSocket Gateway connecting the browser AudioWorklet directly to `gemini-3.5-transcribe-live` and `gemini-3.8-flash-tts`.
-- Cloud Run deployment with session affinity.
-- Firebase integration for saving session transcripts and audio clips to Cloud Storage.
+### ✅ Stage 2: Google Cloud & Vertex AI Realtime Engine *(COMPLETED)*
+- **Vertex AI Client (`src/lib/vertex.ts`)**:
+  - Direct integration with Google Cloud project (`project-5d83834f-f05b-4854-823`) utilizing the user's $300 Google Cloud credit.
+  - Multi-tier authentication: Google Application Default Credentials (ADC), Service Account key, and Google OAuth tokens.
+  - Model fallback chain: `gemini-3.8-flash` → `gemini-2.5-flash` → `gemini-2.5-flash-lite`.
+- **Live Persona Turn Generator (`/api/turn`)**:
+  - Dynamically prompts Gemini with the selected persona's private agenda, role, traits (urgency, interruption index), and conversational memory.
+  - Supports English and natural romanized Hinglish code-switching based on student language detection.
+- **Cloud Text-to-Speech Integration (`/api/tts`)**:
+  - High-fidelity Indian English & Hindi neural voices (`en-IN-Wavenet-A/B/C/D`, `hi-IN-Wavenet`, `en-IN-Journey`) mapped to individual personas.
+  - Seamless client-side audio player with instant barge-in cutoff: pauses the audio element immediately when the student speaks.
+- **AI Placement Analyst (`/api/report`)**:
+  - Structured JSON evaluation endpoint evaluating student performance against 6 criteria with exact transcript quote extraction.
+- **Resilient Fallback**: If an API call is delayed or offline, the client seamlessly falls back to the local simulation without UI interruption.
 
-### 🔄 Stage 3: Deep Evidence Extraction & Persuadable Personas
+### 🔄 Stage 3: Deep Evidence Extraction & Persuadable Personas *(Next)*
 - Persona dynamic stance matrix: AI participants shift their opinion when presented with real data and concrete logic.
 - Cloud Storage audio slice player for one-click playback of student's spoken audio evidence clips.
 
@@ -118,6 +128,30 @@ Every participant has their own prompt vector, urgency, interruption propensity,
 
 ### 🔄 Stage 5: Multi-Human Room (Friends Joining)
 - WebRTC / LiveKit room where 1–3 friends join, and AI participants fill the remaining seats.
+
+---
+
+## 🔑 Google Cloud & Firebase Authentication Setup
+
+The project is configured for Google Cloud Project: `project-5d83834f-f05b-4854-823` (Account: `pratapkavya708@gmail.com`).
+
+To authenticate your local environment with your $300 credit, run these commands in your terminal:
+
+```bash
+# 1. Login with your Google Cloud account
+gcloud auth login pratapkavya708@gmail.com
+
+# 2. Set Application Default Credentials so Next.js can call Vertex AI & Cloud TTS
+gcloud auth application-default login
+
+# 3. Set the default project and quota project
+gcloud config set project project-5d83834f-f05b-4854-823
+gcloud auth application-default set-quota-project project-5d83834f-f05b-4854-823
+
+# 4. Optional: Firebase CLI setup (for Firestore & Hosting)
+npx firebase-tools login
+npx firebase-tools use project-5d83834f-f05b-4854-823
+```
 
 ---
 

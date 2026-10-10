@@ -601,6 +601,42 @@ export class RoomEngine {
     return use[Math.max(0, seats.indexOf(speaker)) % use.length];
   }
 
+  private currentAudio: HTMLAudioElement | null = null;
+
+  private playSynth(cur: Current, text: string, speaker: PersonaId | "moderator") {
+    const synth = "speechSynthesis" in window ? window.speechSynthesis : null;
+    if (!synth || this.health.tts === "unsupported") {
+      setTimeout(() => cur.finish(false), Math.max(1500, wordCount(text) * 380));
+      return;
+    }
+    const sentences = text.match(/[^.!?]+[.!?]*\s*/g) ?? [text];
+    const persona = speaker === "moderator" ? MODERATOR : PERSONA_BY_ID[speaker];
+    const voice = this.voiceFor(speaker);
+    let offset = 0;
+    sentences.forEach((s, i) => {
+      const u = new SpeechSynthesisUtterance(s.trim());
+      if (voice) u.voice = voice;
+      u.lang = voice?.lang ?? (this.lang === "hinglish" ? "hi-IN" : "en-IN");
+      u.pitch = persona.voice.pitch;
+      u.rate = persona.voice.rate;
+      const base = offset;
+      u.onboundary = (ev) => {
+        cur.chars = base + ev.charIndex;
+      };
+      u.onend = () => {
+        if (i === sentences.length - 1) cur.finish(false);
+      };
+      u.onerror = (ev) => {
+        if (ev.error === "canceled" || ev.error === "interrupted") return;
+        this.health.tts = "unsupported";
+        cur.finish(false);
+      };
+      offset += s.length;
+      synth.speak(u);
+    });
+    setTimeout(() => cur.finish(false), Math.max(4000, wordCount(text) * 650) + 4000);
+  }
+
   private say(
     speaker: PersonaId | "moderator",
     text: string,
@@ -633,6 +669,14 @@ export class RoomEngine {
       cur.finish = (cancelled: boolean) => {
         if (cur.done) return;
         cur.done = true;
+        if (this.currentAudio) {
+          try {
+            this.currentAudio.pause();
+          } catch {
+            /* noop */
+          }
+          this.currentAudio = null;
+        }
         if (fallbackTimer) clearTimeout(fallbackTimer);
         turn.tEnd = this.nowSec();
         if (cancelled) {
@@ -652,43 +696,59 @@ export class RoomEngine {
       this.current = cur;
       this.emit();
 
-      const synth = "speechSynthesis" in window ? window.speechSynthesis : null;
-      if (!synth || this.health.tts === "unsupported") {
-        fallbackTimer = setTimeout(() => cur.finish(false), Math.max(1500, wordCount(text) * 380));
-        return;
+      // Try Cloud TTS first for high-fidelity voices
+      if (typeof window !== "undefined" && this.health.net === "online") {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 2200);
+        fetch("/api/tts", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text, speaker, lang: this.lang }),
+          signal: controller.signal,
+        })
+          .then((res) => (res.ok ? res.json() : null))
+          .then((data) => {
+            clearTimeout(timeout);
+            if (cur.done) return;
+            if (data?.audioContent) {
+              const audio = new Audio("data:audio/mp3;base64," + data.audioContent);
+              this.currentAudio = audio;
+              audio.onended = () => {
+                this.currentAudio = null;
+                cur.finish(false);
+              };
+              audio.onerror = () => {
+                this.currentAudio = null;
+                this.playSynth(cur, text, speaker);
+              };
+              audio.play().catch(() => {
+                this.currentAudio = null;
+                this.playSynth(cur, text, speaker);
+              });
+            } else {
+              this.playSynth(cur, text, speaker);
+            }
+          })
+          .catch(() => {
+            clearTimeout(timeout);
+            if (!cur.done) this.playSynth(cur, text, speaker);
+          });
+      } else {
+        this.playSynth(cur, text, speaker);
       }
-      const sentences = text.match(/[^.!?]+[.!?]*\s*/g) ?? [text];
-      const persona = speaker === "moderator" ? MODERATOR : PERSONA_BY_ID[speaker];
-      const voice = this.voiceFor(speaker);
-      let offset = 0;
-      sentences.forEach((s, i) => {
-        const u = new SpeechSynthesisUtterance(s.trim());
-        if (voice) u.voice = voice;
-        u.lang = voice?.lang ?? (this.lang === "hinglish" ? "hi-IN" : "en-IN");
-        u.pitch = persona.voice.pitch;
-        u.rate = persona.voice.rate;
-        const base = offset;
-        u.onboundary = (ev) => {
-          cur.chars = base + ev.charIndex;
-        };
-        u.onend = () => {
-          if (i === sentences.length - 1) cur.finish(false);
-        };
-        u.onerror = (ev) => {
-          if (ev.error === "canceled" || ev.error === "interrupted") return;
-          this.health.tts = "unsupported";
-          cur.finish(false);
-        };
-        offset += s.length;
-        synth.speak(u);
-      });
-      // Safety net: some browsers never fire onend for the last utterance.
-      fallbackTimer = setTimeout(() => cur.finish(false), Math.max(4000, wordCount(text) * 650) + 4000);
     });
   }
 
   private cancelCurrent() {
     if (!this.current) return;
+    if (this.currentAudio) {
+      try {
+        this.currentAudio.pause();
+      } catch {
+        /* noop */
+      }
+      this.currentAudio = null;
+    }
     if ("speechSynthesis" in window) window.speechSynthesis.cancel();
     this.current.finish(true);
   }
@@ -798,7 +858,36 @@ export class RoomEngine {
     const id = this.chooseSpeaker(last?.speaker);
     if (!id) return;
     const w: { text?: string; drift?: boolean } = {};
-    const line = this.buildLine(id, w);
+    let line = this.buildLine(id, w);
+
+    if (this.health.net === "online" && typeof window !== "undefined") {
+      try {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 2000);
+        const res = await fetch("/api/turn", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            topic: this.cfg.topic,
+            panel: this.cfg.panel,
+            turns: this.turns.slice(-6),
+            speaker: id,
+            lang: this.lang,
+          }),
+          signal: controller.signal,
+        });
+        clearTimeout(timeout);
+        if (res.ok) {
+          const data = await res.json();
+          if (data?.text) {
+            line = data.text;
+          }
+        }
+      } catch {
+        /* fallback to prebuilt line */
+      }
+    }
+
     this.pendingRedirect = !!w.drift && Math.random() < 0.6;
     this.chain++;
     await this.say(id, line, { kind: kindOverride ?? "normal", whisper: this.phase === "watch" ? w.text : undefined });
